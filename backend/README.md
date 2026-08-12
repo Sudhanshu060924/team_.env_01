@@ -11,6 +11,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 # edit .env — add DATABASE_URL and GROQ_API_KEY
+
+# Apply all database migrations before starting the server
+alembic upgrade head
+
 uvicorn app.main:app --reload
 ```
 
@@ -98,6 +102,40 @@ SAVE_DEBUG_AUDIO=false
 | GET  | /lectures/{id}/notes | List generated notes |
 | POST | /lectures/{id}/questions | Ask a question (stub until Phase 9) |
 | WS   | /ws/lectures/{id} | Real-time event stream |
+
+## Database migrations (Alembic)
+
+Schema changes are managed by [Alembic](https://alembic.sqlalchemy.org/).
+All commands are run from the `backend/` directory.
+
+```bash
+# Show current revision applied to the database
+alembic current
+
+# Show full migration history
+alembic history --verbose
+
+# Apply all pending migrations (run before starting the server)
+alembic upgrade head
+
+# Roll back one migration
+alembic downgrade -1
+
+# Generate a new migration from model changes
+alembic revision --autogenerate -m "describe the change"
+```
+
+### Adding a new migration
+
+1. Update your SQLAlchemy model in `app/database/models.py`.
+2. Run `alembic revision --autogenerate -m "your description"`.
+3. Review the generated file in `alembic/versions/`.
+4. Run `alembic upgrade head` to apply it.
+
+### Important: never use `create_all()` against Neon
+
+`Base.metadata.create_all()` (via `create_tables()`) is intentionally
+**not** called during FastAPI startup.  Alembic owns the Neon schema.
 
 ## Running tests
 

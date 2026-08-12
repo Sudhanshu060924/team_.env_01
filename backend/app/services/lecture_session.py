@@ -16,6 +16,7 @@ Usage
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict
 
 from app.graph.state import LectureSessionState, MAX_RECENT_TRANSCRIPTS, MAX_TECHNICAL_TERMS
@@ -28,6 +29,13 @@ class LectureSessionStore:
 
     def __init__(self) -> None:
         self._sessions: Dict[str, LectureSessionState] = {}
+        # Throttle timestamps: lecture_id → last call epoch (float)
+        self._last_topic_detection: Dict[str, float] = {}
+        self._last_event_detection: Dict[str, float] = {}
+        # Accumulated new transcript since last event detection run
+        self._event_pending_transcript: Dict[str, str] = {}
+        # Last successfully translated text (for dedup)
+        self._last_translated_text: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -44,6 +52,10 @@ class LectureSessionStore:
 
     def delete(self, lecture_id: str) -> None:
         self._sessions.pop(lecture_id, None)
+        self._last_topic_detection.pop(lecture_id, None)
+        self._last_event_detection.pop(lecture_id, None)
+        self._event_pending_transcript.pop(lecture_id, None)
+        self._last_translated_text.pop(lecture_id, None)
 
     # ------------------------------------------------------------------
     # Mutations — always return the updated state
@@ -95,6 +107,49 @@ class LectureSessionStore:
             "current_subtopic": subtopic,
         })
         return self._sessions[lecture_id]
+
+
+    # ------------------------------------------------------------------
+    # Throttle helpers
+    # ------------------------------------------------------------------
+
+    def should_run_topic_detection(self, lecture_id: str, interval_seconds: int) -> bool:
+        """Return True if enough time has passed since the last topic detection."""
+        last = self._last_topic_detection.get(lecture_id, 0.0)
+        return (time.monotonic() - last) >= interval_seconds
+
+    def mark_topic_detection_ran(self, lecture_id: str) -> None:
+        self._last_topic_detection[lecture_id] = time.monotonic()
+
+    def should_run_event_detection(self, lecture_id: str, interval_seconds: int) -> bool:
+        """Return True if enough time has passed since the last event detection."""
+        last = self._last_event_detection.get(lecture_id, 0.0)
+        return (time.monotonic() - last) >= interval_seconds
+
+    def mark_event_detection_ran(self, lecture_id: str) -> None:
+        self._last_event_detection[lecture_id] = time.monotonic()
+
+    def append_event_pending_transcript(self, lecture_id: str, transcript: str) -> None:
+        """Accumulate transcript text for the next event detection run."""
+        existing = self._event_pending_transcript.get(lecture_id, "")
+        sep = " " if existing else ""
+        self._event_pending_transcript[lecture_id] = (existing + sep + transcript).strip()
+
+    def pop_event_pending_transcript(self, lecture_id: str) -> str:
+        """Return and clear the accumulated pending transcript."""
+        text = self._event_pending_transcript.pop(lecture_id, "")
+        return text
+
+    # ------------------------------------------------------------------
+    # Duplicate translation guard
+    # ------------------------------------------------------------------
+
+    def is_duplicate_translation(self, lecture_id: str, transcript: str) -> bool:
+        """Return True if transcript is identical to the last translated text."""
+        return self._last_translated_text.get(lecture_id, "") == transcript
+
+    def set_last_translated_text(self, lecture_id: str, transcript: str) -> None:
+        self._last_translated_text[lecture_id] = transcript
 
 
 # Module-level singleton

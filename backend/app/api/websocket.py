@@ -7,39 +7,76 @@ Message protocol (client → server):
   { "type": "lecture_completed", "lecture_id": "...", "timestamp": 3600 }
   { "type": "language_change",   "lecture_id": "...", "target_language": "hinglish" }
   { "type": "question",          "lecture_id": "...", "content": "..." }
+  { "type": "chat_message",      "thread_id": "...", "content": "..." }   ← student doubt
+  { "type": "chat_reply",        "thread_id": "...", "content": "..." }   ← teacher reply
   { "type": "ping" }
 
 Message protocol (server → client):
-  { "type": "connected",         "lecture_id": "...", "message": "..." }
-  { "type": "speech_event",      "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
-  { "type": "translation",       "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {"language": "...", "source": "translation_agent"} }
-  { "type": "translation_error", "lecture_id": "...", "timestamp": ..., "message": "Translation temporarily unavailable" }
-  { "type": "topic_update",      "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
-  { "type": "important_event",   "lecture_id": "...", "timestamp": ..., "content": "..." }
-  { "type": "notes",             "lecture_id": "...", "content": "..." }
-  { "type": "answer",            "lecture_id": "...", "content": "..." }
-  { "type": "error",             "message": "..." }
+  { "type": "connected",              "lecture_id": "...", "message": "..." }
+  { "type": "speech_event",           "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
+  { "type": "translation",            "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {"language": "...", "source": "translation_agent"} }
+  { "type": "translation_error",      "lecture_id": "...", "timestamp": ..., "message": "Translation temporarily unavailable" }
+  { "type": "topic_update",           "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
+  { "type": "important_event",        "lecture_id": "...", "timestamp": ..., "content": "..." }
+  { "type": "notes",                  "lecture_id": "...", "content": "..." }
+  { "type": "answer",                 "lecture_id": "...", "content": "..." }
+  { "type": "chat_message_created",   "message": {...} }
+  { "type": "error",                  "message": "..." }
   { "type": "pong" }
 """
 import asyncio
 import logging
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from app.services.websocket_manager import manager
 from app.graph.state import VALID_LANGUAGES
 from app.services.lecture_session import session_store
 from app.graph.nodes.translation import translate
+from app.graph.nodes.supervisor import detect_topic
+from app.graph.nodes.router import detect_important_events
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _resolve_user_from_token(token: Optional[str]):
+    """
+    Resolve a user from the session token passed as a query parameter.
+    Returns the User ORM object, or None if the token is missing / invalid.
+    Avoids touching the DB when no token is provided so unauthenticated
+    viewers (live lecture observers) are unaffected.
+    """
+    if not token:
+        return None
+    try:
+        from app.services.auth_service import get_user_id_from_session
+        user_id = get_user_id_from_session(token)
+        if not user_id:
+            return None
+        # Build a lightweight stand-in — we only need id and role for chat dispatch.
+        # Full DB lookup happens in the per-message chat handlers which have their own db session.
+        from types import SimpleNamespace
+        return SimpleNamespace(id=user_id)
+    except Exception:
+        return None
+
+
 @router.websocket("/ws/lectures/{lecture_id}")
-async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
-    await manager.connect(lecture_id, websocket)
+async def websocket_endpoint(
+    websocket: WebSocket,
+    lecture_id: str,
+    token: Optional[str] = Query(default=None),
+):
+    # Resolve user (optional — existing live pipeline works without auth)
+    caller = _resolve_user_from_token(token)
+    user_id = caller.id if caller else None
+
+    await manager.connect(lecture_id, websocket, user_id=user_id)
 
     # Ensure a session state exists for this lecture
     session_store.get_or_create(lecture_id)
@@ -89,10 +126,43 @@ async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
                 )
                 continue
 
+            # ── student requests notes in a specific language ──────────
+            if msg_type == "generate_notes":
+                asyncio.create_task(
+                    _handle_generate_notes(lecture_id, data, websocket)
+                )
+                continue
+
             # ── student question via WebSocket ─────────────────────────
             if msg_type == "question":
                 asyncio.create_task(
                     _handle_question(lecture_id, data, websocket)
+                )
+                continue
+
+            # ── student sends a doubt message ──────────────────────────
+            if msg_type == "chat_message":
+                if not user_id:
+                    await manager.send_personal(websocket, {
+                        "type": "error",
+                        "message": "Authentication required to send chat messages",
+                    })
+                    continue
+                asyncio.create_task(
+                    _handle_chat_message(lecture_id, user_id, data, websocket)
+                )
+                continue
+
+            # ── teacher sends a reply ──────────────────────────────────
+            if msg_type == "chat_reply":
+                if not user_id:
+                    await manager.send_personal(websocket, {
+                        "type": "error",
+                        "message": "Authentication required to send chat replies",
+                    })
+                    continue
+                asyncio.create_task(
+                    _handle_chat_reply(lecture_id, user_id, data, websocket)
                 )
                 continue
 
@@ -151,7 +221,7 @@ async def _handle_audio(lecture_id: str, data: dict) -> None:
         async for db in get_db():
             await event_svc.save_event(db, event)
 
-        # Broadcast raw transcript to UI
+        # Broadcast raw transcript to UI immediately — never blocked by Groq.
         await manager.broadcast(lecture_id, {
             "type": "speech_event",
             "lecture_id": lecture_id,
@@ -160,10 +230,24 @@ async def _handle_audio(lecture_id: str, data: dict) -> None:
             "metadata": event.metadata,
         })
 
-        # ── Translation pipeline ────────────────────────────────────
+        # Accumulate transcript for throttled event detection.
+        session_store.append_event_pending_transcript(lecture_id, text)
+
+        # Priority 1: Translation (runs for each meaningful chunk).
         asyncio.create_task(
             _run_translation(lecture_id, text, timestamp)
         )
+
+        # Priority 2: Topic detection (throttled).
+        asyncio.create_task(
+            _run_topic_detection(lecture_id, timestamp)
+        )
+
+        # Priority 3: Important event detection (throttled, uses accumulated text).
+        asyncio.create_task(
+            _run_important_event_detection(lecture_id, timestamp)
+        )
+
 
     except Exception as exc:
         logger.error("Audio handler error lecture=%s: %s", lecture_id, exc, exc_info=True)
@@ -173,21 +257,34 @@ async def _handle_audio(lecture_id: str, data: dict) -> None:
 async def _run_translation(lecture_id: str, transcript: str, timestamp: float) -> None:
     """
     Update session context and call the Translation Agent.
+
+    Guards:
+      - Skips duplicate transcripts (identical to the last translated text).
+      - Short/filler transcripts are dropped inside translate() itself.
     Runs as a separate task so it never blocks the next audio chunk.
     """
     try:
-        # Update bounded context window
+        # Dedup: skip if this exact text was already translated.
+        if session_store.is_duplicate_translation(lecture_id, transcript):
+            logger.debug(
+                "translation_agent: duplicate transcript skipped lecture=%s", lecture_id
+            )
+            return
+
+        # Update bounded context window.
         state = session_store.add_transcript(lecture_id, transcript, timestamp)
 
         result = await translate(state)
         if not result:
-            # Translation returned nothing (e.g. API key missing) — skip broadcast
+            # Translation returned nothing (short text, API key missing, etc.) — skip broadcast.
             return
 
         translated = result["translated"]
         lang       = result["language"]
 
-        # Persist the translation back into session for next-turn context
+        # Record translated text for dedup on next chunk.
+        session_store.set_last_translated_text(lecture_id, transcript)
+        # Persist the translation back into session for next-turn context.
         session_store.set_translation(lecture_id, translated)
 
         await manager.broadcast(lecture_id, {
@@ -206,6 +303,96 @@ async def _run_translation(lecture_id: str, transcript: str, timestamp: float) -
             "timestamp":  timestamp,
             "message":    "Translation temporarily unavailable",
         })
+
+
+async def _run_topic_detection(lecture_id: str, timestamp: float) -> None:
+    """
+    Run topic detection against the current session state.
+    Throttled: skips if called within TOPIC_DETECTION_INTERVAL_SECONDS of last run.
+    Broadcasts a 'topic_update' message if the topic changed.
+    Runs as a separate task — never blocks the audio pipeline.
+    """
+    settings = get_settings()
+
+    if not session_store.should_run_topic_detection(
+        lecture_id, settings.TOPIC_DETECTION_INTERVAL_SECONDS
+    ):
+        logger.debug(
+            "topic_detection: skipped due to throttle lecture=%s", lecture_id
+        )
+        return
+
+    # Mark immediately so parallel tasks don't double-fire.
+    session_store.mark_topic_detection_ran(lecture_id)
+
+    try:
+        state = session_store.get_or_create(lecture_id)
+        result = await detect_topic(state)
+        if not result or not result.get("changed"):
+            return
+
+        topic    = result["topic"]
+        subtopic = result["subtopic"]
+
+        # Update session state so translation context stays accurate.
+        session_store.set_topic(lecture_id, topic=topic, subtopic=subtopic)
+
+        await manager.broadcast(lecture_id, {
+            "type":       "topic_update",
+            "lecture_id": lecture_id,
+            "timestamp":  timestamp,
+            "content":    topic,
+            "metadata":   {"subtopic": subtopic},
+        })
+        logger.info("topic_update broadcast lecture=%s topic=%r subtopic=%r", lecture_id, topic, subtopic)
+
+    except Exception as exc:
+        logger.error("Topic detection error lecture=%s: %s", lecture_id, exc, exc_info=True)
+
+
+async def _run_important_event_detection(
+    lecture_id: str,
+    timestamp: float,
+) -> None:
+    """
+    Detect key definitions, formulas, and concepts from accumulated transcript.
+    Throttled: skips if called within IMPORTANT_EVENT_INTERVAL_SECONDS of last run.
+    Only processes text accumulated since the previous run.
+    Broadcasts one 'important_event' message per detected item.
+    Runs as a separate task — never blocks the audio pipeline.
+    """
+    settings = get_settings()
+
+    if not session_store.should_run_event_detection(
+        lecture_id, settings.IMPORTANT_EVENT_INTERVAL_SECONDS
+    ):
+        logger.debug(
+            "important_event_detection: skipped due to throttle lecture=%s", lecture_id
+        )
+        return
+
+    # Pop accumulated transcript (cleared regardless of success/failure below).
+    accumulated = session_store.pop_event_pending_transcript(lecture_id)
+    if not accumulated.strip():
+        return
+
+    # Mark immediately so parallel tasks don't double-fire.
+    session_store.mark_event_detection_ran(lecture_id)
+
+    try:
+        events = await detect_important_events(accumulated, timestamp, lecture_id)
+        for evt in events:
+            await manager.broadcast(lecture_id, {
+                "type":       "important_event",
+                "lecture_id": lecture_id,
+                "timestamp":  timestamp,
+                "content":    evt["content"],
+                "metadata":   {"is_formula": evt["is_formula"]},
+            })
+    except Exception as exc:
+        logger.error("Important event detection error lecture=%s: %s", lecture_id, exc, exc_info=True)
+
+
 
 
 async def _handle_language_change(lecture_id: str, data: dict, websocket: WebSocket) -> None:
@@ -350,4 +537,215 @@ async def _handle_question(lecture_id: str, data: dict, websocket: WebSocket) ->
             "type": "answer",
             "lecture_id": lecture_id,
             "content": f"Q&A not yet active (Phase 9). Error: {exc}",
+        })
+
+
+async def _handle_generate_notes(lecture_id: str, data: dict, websocket: WebSocket) -> None:
+    """
+    Regenerate notes for a completed lecture in a requested language.
+
+    Client sends:
+      { "type": "generate_notes", "lecture_id": "...", "target_language": "hindi" }
+
+    The handler signals 'notes_generating' back to the requesting client,
+    then runs the notes graph, which broadcasts the result to all clients.
+    """
+    raw_lang = data.get("target_language", "").lower().strip()
+
+    if raw_lang not in VALID_LANGUAGES:
+        await manager.send_personal(websocket, {
+            "type":    "error",
+            "message": f"Invalid language '{raw_lang}'. Allowed: english, hindi, hinglish.",
+        })
+        return
+
+    # Acknowledge immediately so the UI can show a loading state
+    await manager.send_personal(websocket, {
+        "type":       "notes_generating",
+        "lecture_id": lecture_id,
+        "language":   raw_lang,
+    })
+
+    try:
+        from app.graph.notes_graph import run_notes_graph
+        asyncio.create_task(run_notes_graph(lecture_id, target_language=raw_lang))
+    except Exception as exc:
+        logger.error("generate_notes handler error lecture=%s: %s", lecture_id, exc)
+        await manager.send_personal(websocket, {
+            "type":    "error",
+            "message": f"Notes generation failed: {exc}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Chat handlers — Student ↔ Teacher live doubt system
+# ---------------------------------------------------------------------------
+
+async def _handle_chat_message(
+    lecture_id: str,
+    sender_user_id: str,
+    data: dict,
+    websocket: WebSocket,
+) -> None:
+    """
+    Student sends a chat_message.
+
+    Flow:
+      1. Validate content
+      2. Get the sender's user record + verify role=student
+      3. Find/create thread for (lecture_id, student_id)
+      4. Persist message in DB
+      5. Echo saved message to the student
+      6. Broadcast chat_message_created to ALL connections on this lecture
+         (so teachers connected to the same lecture WS see it immediately)
+    """
+    content = (data.get("content") or "").strip()
+    if not content:
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": "Message content must not be empty",
+        })
+        return
+    if len(content) > 2000:
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": "Message must be at most 2000 characters",
+        })
+        return
+
+    try:
+        from app.database.database import get_db
+        from app.database.models import User
+        from sqlalchemy import select
+        import app.services.chat_service as chat_svc
+
+        async for db in get_db():
+            # Verify sender is a student
+            result = await db.execute(select(User).where(User.id == sender_user_id))
+            user = result.scalar_one_or_none()
+            if user is None or user.role != "student":
+                await manager.send_personal(websocket, {
+                    "type": "error",
+                    "message": "Only students can send chat_message",
+                })
+                return
+
+            msg_read = await chat_svc.post_student_message(
+                db, lecture_id, sender_user_id, content
+            )
+
+        payload = {
+            "type": "chat_message_created",
+            "message": {
+                "id": msg_read.id,
+                "thread_id": msg_read.thread_id,
+                "sender_id": msg_read.sender_id,
+                "sender_role": msg_read.sender_role,
+                "content": msg_read.content,
+                "created_at": msg_read.created_at.isoformat(),
+            },
+        }
+        # Echo to sender
+        await manager.send_personal(websocket, payload)
+        # Broadcast to all connected clients on this lecture (teachers see it)
+        await manager.broadcast(lecture_id, payload)
+
+    except Exception as exc:
+        logger.error("chat_message handler error lecture=%s: %s", lecture_id, exc)
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": f"Failed to save message: {exc}",
+        })
+
+
+async def _handle_chat_reply(
+    lecture_id: str,
+    sender_user_id: str,
+    data: dict,
+    websocket: WebSocket,
+) -> None:
+    """
+    Teacher sends a chat_reply.
+
+    Flow:
+      1. Validate content + thread_id
+      2. Verify sender role=teacher
+      3. Verify teacher owns the lecture (via chat_service)
+      4. Persist reply in DB
+      5. Echo saved message back to teacher
+      6. Send reply directly to the student's WebSocket connection(s)
+      7. Also broadcast to all lecture connections for completeness
+    """
+    thread_id = (data.get("thread_id") or "").strip()
+    content = (data.get("content") or "").strip()
+
+    if not thread_id:
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": "thread_id is required for chat_reply",
+        })
+        return
+    if not content:
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": "Message content must not be empty",
+        })
+        return
+    if len(content) > 2000:
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": "Message must be at most 2000 characters",
+        })
+        return
+
+    try:
+        from app.database.database import get_db
+        from app.database.models import User, ChatThread
+        from sqlalchemy import select
+        import app.services.chat_service as chat_svc
+
+        async for db in get_db():
+            # Verify sender is a teacher
+            result = await db.execute(select(User).where(User.id == sender_user_id))
+            user = result.scalar_one_or_none()
+            if user is None or user.role != "teacher":
+                await manager.send_personal(websocket, {
+                    "type": "error",
+                    "message": "Only teachers can send chat_reply",
+                })
+                return
+
+            msg_read = await chat_svc.post_teacher_reply(
+                db, lecture_id, thread_id, sender_user_id, content
+            )
+
+            # Look up the thread's student_id to deliver reply to that student
+            thread_result = await db.execute(
+                select(ChatThread).where(ChatThread.id == thread_id)
+            )
+            thread = thread_result.scalar_one_or_none()
+            student_id = thread.student_id if thread else None
+
+        payload = {
+            "type": "chat_message_created",
+            "message": {
+                "id": msg_read.id,
+                "thread_id": msg_read.thread_id,
+                "sender_id": msg_read.sender_id,
+                "sender_role": msg_read.sender_role,
+                "content": msg_read.content,
+                "created_at": msg_read.created_at.isoformat(),
+            },
+        }
+        # Echo to teacher
+        await manager.send_personal(websocket, payload)
+        # Deliver directly to the student if they are connected
+        if student_id:
+            await manager.send_to_user(student_id, payload)
+
+    except Exception as exc:
+        logger.error("chat_reply handler error lecture=%s: %s", lecture_id, exc)
+        await manager.send_personal(websocket, {
+            "type": "error",
+            "message": f"Failed to save reply: {exc}",
         })

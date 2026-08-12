@@ -5,6 +5,8 @@ export interface Lecture {
   status: 'live' | 'completed' | string
   created_at?: string
   completed_at?: string | null
+  video_url?: string | null
+  cloudinary_public_id?: string | null
 }
 
 export interface LectureCreate {

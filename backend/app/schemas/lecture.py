@@ -14,7 +14,10 @@ class LectureRead(BaseModel):
     title: str
     video_name: str
     status: str
+    teacher_id: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    video_url: Optional[str] = None
+    cloudinary_public_id: Optional[str] = None
 
     model_config = {"from_attributes": True}

@@ -105,7 +105,9 @@ async def test_translate_english():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="english")
         result = await translate(state)
 
@@ -128,7 +130,9 @@ async def test_translate_hindi():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="hindi")
         result = await translate(state)
 
@@ -151,7 +155,9 @@ async def test_translate_hinglish():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="hinglish")
         result = await translate(state)
 
@@ -180,7 +186,9 @@ async def test_translate_passes_context_to_groq():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         await translate(state)
 
     call_kwargs = create_mock.call_args.kwargs
@@ -208,7 +216,9 @@ async def test_translate_preserves_formula():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         result = await translate(state)
 
     assert "O(log n)" in result["translated"]
@@ -226,7 +236,9 @@ async def test_translate_returns_empty_on_groq_error():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         result = await translate(_make_state())
 
     assert result == {}
@@ -425,7 +437,9 @@ async def test_translation_failure_does_not_affect_transcription():
     with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
          patch("app.graph.nodes.translation.get_settings") as ms:
         ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama3-8b-8192"
+        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.MIN_TRANSCRIPT_CHARS = 5
+        ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         # Must NOT raise
         result = await translate(_make_state())
 

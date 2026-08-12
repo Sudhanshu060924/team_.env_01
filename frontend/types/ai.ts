@@ -53,6 +53,7 @@ export interface WSNotesMessage extends WSMessage {
   type: 'notes'
   lecture_id: string
   content: string
+  language?: string
 }
 
 export interface WSAnswerMessage extends WSMessage {

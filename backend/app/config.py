@@ -7,9 +7,15 @@ class Settings(BaseSettings):
     # Database (Phase 2+)
     DATABASE_URL: str = ""
 
+    # Cloudinary — video storage
+    CLOUD_NAME: str = ""
+    CLOUD_API_KEY: str = ""
+    CLOUD_API_SECRET: str = ""
+
+
     # Groq — LLM inference (Phase 7+)
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama3-8b-8192"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
 
     # Groq — Whisper speech-to-text (Phase 5)
     # Accepted values: "turbo"  → whisper-large-v3-turbo  (default, faster)
@@ -36,6 +42,27 @@ class Settings(BaseSettings):
     # Frontend URLs (optional, used in CORS / links)
     NEXT_PUBLIC_API_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_WS_URL: str = "ws://localhost:8000"
+
+    # Comma-separated list of allowed CORS origins.
+    # Use "*" only for public APIs that never set credentials.
+    # Default covers local dev (Next.js dev server).
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    # ── Groq rate-limit management ────────────────────────────────────────────
+    # How often (seconds) topic detection may run at most.
+    TOPIC_DETECTION_INTERVAL_SECONDS: int = 30
+    # How often (seconds) important-event detection may run at most.
+    IMPORTANT_EVENT_INTERVAL_SECONDS: int = 30
+    # Hard character cap for each bounded context string sent to Groq.
+    MAX_TRANSLATION_CONTEXT_CHARS: int = 4000
+    MAX_TOPIC_CONTEXT_CHARS: int = 5000
+    MAX_EVENT_CONTEXT_CHARS: int = 5000
+    # Maximum simultaneous Groq requests (semaphore).
+    MAX_CONCURRENT_GROQ_REQUESTS: int = 1
+    # Maximum number of 429 retries per Groq call.
+    GROQ_MAX_RETRIES: int = 2
+    # Minimum transcript length (chars) to bother calling Groq.
+    MIN_TRANSCRIPT_CHARS: int = 10
 
     model_config = SettingsConfigDict(
         env_file=".env",

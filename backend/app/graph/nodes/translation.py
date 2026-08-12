@@ -2,7 +2,13 @@
 Translation Agent — Phase 7
 
 Translates a Whisper transcript into the student's chosen language
-(English / Hindi / Hinglish) using the Groq LLM with full lecture context.
+(English / Hindi / Hinglish) using the Groq LLM with bounded context.
+
+Changes for rate-limit management
+----------------------------------
+- Bounded context: prompt is capped at MAX_TRANSLATION_CONTEXT_CHARS.
+- Short-transcript guard: skips Groq for trivially small input.
+- Retry on 429: delegated to groq_chat_with_retry().
 
 Public interface
 ---------------
@@ -22,6 +28,7 @@ from typing import Literal
 
 from app.graph.state import LectureSessionState, VALID_LANGUAGES
 from app.integrations.groq_service import get_groq_client
+from app.integrations.groq_limiter import groq_chat_with_retry
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -86,6 +93,33 @@ _LABELS: dict[str, str] = {
     "hinglish": "Hinglish",
 }
 
+# Filler words that are not worth translating on their own.
+_FILLER_WORDS = frozenset({
+    "um", "uh", "okay", "ok", "yes", "no", "so", "well", "right",
+    "alright", "hmm", "ah", "err", "like",
+})
+
+
+def _is_trivial(text: str) -> bool:
+    """Return True for empty / whitespace-only / filler-word-only text."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    words = stripped.lower().split()
+    return all(w in _FILLER_WORDS for w in words)
+
+
+def _truncate_to_chars(text: str, max_chars: int) -> str:
+    """Truncate text to at most max_chars, preferring sentence boundaries."""
+    if len(text) <= max_chars:
+        return text
+    # Try to cut at the last full sentence within budget.
+    trimmed = text[-max_chars:]
+    dot = trimmed.find(". ")
+    if dot != -1:
+        return trimmed[dot + 2:]
+    return trimmed
+
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
@@ -96,7 +130,8 @@ async def translate(state: LectureSessionState) -> dict:
     Returns {"translated": str, "language": str} or {} on failure.
     Never raises — errors are logged and swallowed so transcription is unaffected.
     """
-    if not state.last_transcript.strip():
+    transcript = state.last_transcript
+    if _is_trivial(transcript):
         return {}
 
     lang = state.target_language.lower()
@@ -109,36 +144,56 @@ async def translate(state: LectureSessionState) -> dict:
         logger.warning("translation_agent: GROQ_API_KEY not set — skipping translation")
         return {}
 
+    # Hard length guard: reject transcripts below minimum threshold.
+    if len(transcript.strip()) < settings.MIN_TRANSCRIPT_CHARS:
+        logger.debug(
+            "translation_agent: transcript too short (%d chars) — skipping",
+            len(transcript.strip()),
+        )
+        return {}
+
     label = _LABELS[lang]
 
-    # Build bounded context string
-    recent_ctx = "\n".join(
-        f"- {t}" for t in state.recent_transcripts[:-1]  # exclude current (already in LATEST)
-    ) or "(none yet)"
+    # Build bounded context (capped at MAX_TRANSLATION_CONTEXT_CHARS total).
+    max_ctx = settings.MAX_TRANSLATION_CONTEXT_CHARS
 
-    terms_ctx = ", ".join(state.technical_terms) if state.technical_terms else "(none detected)"
-    prev_ctx  = state.previous_translation or "(none)"
+    # Recent transcripts: last 3 chunks only, then truncate the joined string.
+    recent_chunks = state.recent_transcripts[-4:-1]  # up to 3 before current
+    recent_raw = "\n".join(f"- {t}" for t in recent_chunks) or "(none yet)"
+    recent_ctx = _truncate_to_chars(recent_raw, max_ctx // 4)
+
+    terms_raw = ", ".join(state.technical_terms[:10]) if state.technical_terms else "(none detected)"
+    prev_ctx  = _truncate_to_chars(state.previous_translation or "(none)", max_ctx // 8)
 
     system_msg = _SYSTEM_PROMPT.format(target_language_label=label)
     user_msg   = _USER_PROMPT.format(
-        topic              = state.current_topic    or "unknown",
-        subtopic           = state.current_subtopic or "unknown",
-        terms              = terms_ctx,
-        recent             = recent_ctx,
-        prev_translation   = prev_ctx,
-        transcript         = state.last_transcript,
+        topic                 = state.current_topic    or "unknown",
+        subtopic              = state.current_subtopic or "unknown",
+        terms                 = terms_raw,
+        recent                = recent_ctx,
+        prev_translation      = prev_ctx,
+        transcript            = transcript,
         target_language_label = label,
+    )
+
+    # Final safety: cap the entire user message.
+    user_msg = _truncate_to_chars(user_msg, max_ctx)
+
+    logger.info(
+        "translation_agent: Groq translation requested lecture=%s lang=%s chars=%d",
+        state.lecture_id, lang, len(transcript),
     )
 
     try:
         client = get_groq_client()
-        response = await client.chat.completions.create(
+        response = await groq_chat_with_retry(
+            client,
             model=settings.GROQ_MODEL,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user",   "content": user_msg},
             ],
-            temperature=0.2,     # low randomness — accuracy over creativity
+            temperature=0.2,
             max_tokens=512,
         )
         translated = response.choices[0].message.content.strip()
@@ -147,7 +202,7 @@ async def translate(state: LectureSessionState) -> dict:
 
         logger.debug(
             "translation_agent: translated %d chars → %d chars (lang=%s)",
-            len(state.last_transcript), len(translated), lang,
+            len(transcript), len(translated), lang,
         )
         return {"translated": translated, "language": lang}
 

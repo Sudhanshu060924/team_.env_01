@@ -8,12 +8,22 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
+from app.integrations.groq_limiter import reset_semaphore
+
+
+@pytest.fixture(autouse=True)
+def _reset_groq_semaphore():
+    """Reset the Groq concurrency semaphore before every test."""
+    reset_semaphore()
+    yield
+    reset_semaphore()
+
 
 @pytest.fixture(autouse=True)
 def _patch_db(monkeypatch):
     """
     Prevent any real database access during tests:
-    - create_tables() is a no-op
+    - create_tables() is a no-op (kept in case any helper calls it directly)
     - get_db() yields None (services are mocked per-test)
     """
     with patch("app.database.database.create_tables", new_callable=AsyncMock):

@@ -14,7 +14,7 @@ Public interface
 ---------------
     from app.graph.nodes.notes import generate_notes
 
-    markdown = await generate_notes(lecture_id, events)
+    markdown = await generate_notes(lecture_id, events, target_language="english")
 """
 from __future__ import annotations
 
@@ -27,21 +27,64 @@ from app.integrations.groq_service import get_groq_client
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """\
+# ── Language-specific instruction fragments ────────────────────────────────────
+
+_LANG_INSTRUCTIONS = {
+    "english": (
+        "Write entirely in clear, academic English."
+    ),
+    "hindi": (
+        "Write in natural, educational Hindi (Devanagari script). "
+        "Preserve technical terms, formulas, code, variable names, and "
+        "numbers in their original English/ASCII form where appropriate — "
+        "e.g. 'Binary Search की time complexity O(log n) होती है।'"
+    ),
+    "hinglish": (
+        "Write in natural Indian Hinglish using ROMAN SCRIPT ONLY — "
+        "do NOT use Devanagari. Mix Hindi and English naturally as spoken "
+        "in Indian educational contexts — "
+        "e.g. 'Binary Search mein hum search space ko har step par half karte hain.' "
+        "Preserve all technical terms, formulas, code, and numbers in English."
+    ),
+}
+
+_SYSTEM_PROMPT_TEMPLATE = """\
 You are VidyaRoom Notes Agent — an expert teaching assistant.
 Your job is to read a raw lecture transcript and any board/slide text, then
 produce clean, well-structured study notes in Markdown.
 
+Target language: {target_language}
+Language instruction: {lang_instruction}
+
 Rules:
-- Use ## for main sections and ### for subsections.
+- Use # for the lecture title, ## for main sections, ### for subsections.
 - Use **bold** for key terms and definitions.
-- Use LaTeX fenced code blocks (```math) for formulas.
-- Include a short "Summary" section at the top (2-4 sentences).
-- Include a "Key Takeaways" bullet list at the bottom (max 7 points).
+- Use LaTeX fenced code blocks (```math) for mathematical formulas.
+- Use fenced code blocks (```language) for code and commands.
+- Include a short "## Summary" section at the top (2–4 sentences).
+- Include a "## Key Takeaways" bullet list (max 7 points) that summarises the most important points.
+- Include a "## Main Concepts" section if the lecture covered distinct concepts or definitions.
+- Include "## Important Formulas" only if formulas were discussed.
+- Include "## Code / Commands" only if code or terminal commands were discussed.
+- Include "## Examples" only if concrete examples were given.
+- Include a brief "## Recap" section at the end (1–3 sentences).
+- Omit any section that has no useful content — do NOT force empty sections.
 - Be concise — omit filler words and repetition from the transcript.
 - Preserve technical vocabulary exactly (do not paraphrase equations or algorithms).
-- Write in English regardless of the source language.
+- Do NOT hallucinate. Do NOT add information that was not discussed.
+- Do NOT write a transcript — write useful study notes.
+- Return only Markdown. Do not include any preamble or explanation outside the Markdown.
 """
+
+
+def _build_system_prompt(target_language: str) -> str:
+    """Build the system prompt for the given target language."""
+    lang = target_language.lower().strip()
+    lang_instruction = _LANG_INSTRUCTIONS.get(lang, _LANG_INSTRUCTIONS["english"])
+    return _SYSTEM_PROMPT_TEMPLATE.format(
+        target_language=target_language,
+        lang_instruction=lang_instruction,
+    )
 
 
 def _build_user_prompt(events: List[LectureEvent]) -> str:
@@ -68,7 +111,11 @@ def _build_user_prompt(events: List[LectureEvent]) -> str:
     return "\n\n".join(sections) if sections else "No transcript available."
 
 
-async def generate_notes(lecture_id: str, events: List[LectureEvent]) -> str:
+async def generate_notes(
+    lecture_id: str,
+    events: List[LectureEvent],
+    target_language: str = "english",
+) -> str:
     """
     Call Groq LLM to produce Markdown study notes from the lecture events.
 
@@ -87,12 +134,14 @@ async def generate_notes(lecture_id: str, events: List[LectureEvent]) -> str:
         logger.info("Notes generation skipped: no usable events for lecture_id=%s", lecture_id)
         return ""
 
+    system_prompt = _build_system_prompt(target_language)
+
     try:
         client = get_groq_client()
         response = await client.chat.completions.create(
             model=settings.GROQ_MODEL,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_content},
             ],
             temperature=0.3,
@@ -100,8 +149,8 @@ async def generate_notes(lecture_id: str, events: List[LectureEvent]) -> str:
         )
         notes_md = response.choices[0].message.content or ""
         logger.info(
-            "Notes generated for lecture_id=%s — %d chars",
-            lecture_id, len(notes_md),
+            "Notes generated for lecture_id=%s language=%s — %d chars",
+            lecture_id, target_language, len(notes_md),
         )
         return notes_md.strip()
 

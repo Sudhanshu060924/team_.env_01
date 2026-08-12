@@ -105,8 +105,9 @@ async def test_get_events():
 
 @pytest.mark.asyncio
 async def test_get_notes_empty():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/lectures/any-id/notes")
+    with patch("app.api.lectures.note_svc.get_notes", new_callable=AsyncMock, return_value=[]):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/lectures/any-id/notes")
     assert resp.status_code == 200
     assert resp.json() == []
 

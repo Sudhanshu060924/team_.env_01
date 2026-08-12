@@ -8,7 +8,15 @@ const config: Config = {
     './lib/**/*.{ts,tsx}',
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        // Yellow accent
+        accent: '#FACC15',
+      },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', '"Segoe UI"', 'system-ui', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
 }
