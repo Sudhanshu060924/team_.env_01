@@ -1,0 +1,27 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+websockets>=12.0
+
+# Phase 2 — Database
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+
+# Phase 5 — Speech (Groq Whisper)
+groq>=0.9
+
+# Phase 6+ — Vision / AI (install when needed)
+# langgraph>=0.2
+# langchain-groq>=0.1
+# faster-whisper>=1.0
+# opencv-python-headless>=4.9
+# pillow>=10.3
+# pytesseract>=0.3
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27.0
