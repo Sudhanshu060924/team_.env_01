@@ -10,6 +10,7 @@ from app.schemas.notes import NoteRead
 from app.schemas.qa import QuestionRequest, QuestionResponse
 import app.services.lecture_service as lecture_svc
 import app.services.event_service as event_svc
+import app.services.note_service as note_svc
 
 router = APIRouter()
 
@@ -47,9 +48,8 @@ async def get_events(
 
 @router.get("/{lecture_id}/notes", response_model=List[NoteRead])
 async def get_notes(lecture_id: str, db: AsyncSession = Depends(get_db)):
-    """Return generated notes for a lecture. Notes are created by the Notes Agent (Phase 8)."""
-    # Phase 2: return empty list; Phase 8 will populate
-    return []
+    """Return generated notes for a lecture (produced by the Notes Agent)."""
+    return await note_svc.get_notes(db, lecture_id)
 
 
 @router.post("/{lecture_id}/questions", response_model=QuestionResponse)

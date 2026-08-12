@@ -2,6 +2,7 @@
 Shared pytest fixtures.
 
 Patches database initialisation so tests don't require a real Neon connection.
+Patches FFmpeg check so tests don't require FFmpeg to be installed.
 """
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -15,8 +16,20 @@ def _patch_db(monkeypatch):
     - create_tables() is a no-op
     - get_db() yields None (services are mocked per-test)
     """
-    # Patch create_tables used in lifespan
     with patch("app.database.database.create_tables", new_callable=AsyncMock):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _patch_ffmpeg():
+    """
+    Prevent the lifespan FFmpeg check from raising during tests.
+    Individual audio preprocessor tests mock at a lower level.
+    """
+    with patch(
+        "app.services.audio_preprocessor.check_ffmpeg",
+        return_value="/usr/bin/ffmpeg",
+    ):
         yield
 
 

@@ -1,28 +1,43 @@
 """
 Speech service — Phase 5
 
-Transcribes audio using the Groq Whisper API (whisper-large-v3-turbo by default).
+Pipeline:
+    audio_bytes (raw browser WebM/OGG/…)
+        ↓
+    AudioPreprocessor.clean_audio()  — FFmpeg: mono 16 kHz, highpass, lowpass,
+                                       moderate denoising, loudnorm
+        ↓
+    cleaned WAV bytes
+        ↓
+    Groq Whisper API  (whisper-large-v3-turbo or whisper-large-v3)
+        ↓
+    transcript dict
 
-The public interface is a single async function::
-
+Public interface
+----------------
     result = await transcribe_audio(audio_bytes, filename="chunk.webm")
 
-Returns::
-
+Returns:
     {
         "text":     "Hello, this is the transcribed speech.",
-        "language": "en",          # detected language code
-        "duration": 4.32,          # seconds (only present for verbose_json)
+        "language": "en",
+        "duration": 4.32,   # only when present in the API response
     }
 
-If the API key is missing or empty the service returns an empty result instead
-of raising, so that the WebSocket handler can continue without crashing.
+If the API key is missing, or if any step fails, an empty result is returned
+so the WebSocket handler can continue without crashing.
 """
 import io
 import logging
 
 from app.config import get_settings
 from app.integrations.groq_service import get_groq_client
+from app.services.audio_preprocessor import (
+    AudioPreprocessor,
+    AudioPreprocessingError,
+    FFmpegNotFoundError,
+    preprocessor as _default_preprocessor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +50,14 @@ _EMPTY: dict = {"text": "", "language": "en"}
 
 def _choose_model() -> str:
     """
-    Pick the model from settings.WHISPER_MODEL.
+    Pick the Whisper model from settings.WHISPER_MODEL.
     Accepts the short alias 'turbo' / 'large' or the full model name.
     Falls back to whisper-large-v3-turbo.
     """
     alias = get_settings().WHISPER_MODEL.lower().strip()
     if alias in ("large", WHISPER_LARGE):
         return WHISPER_LARGE
-    return WHISPER_TURBO   # default: 'turbo', 'small', or any unrecognised value
+    return WHISPER_TURBO
 
 
 async def transcribe_audio(
@@ -50,46 +65,72 @@ async def transcribe_audio(
     filename: str = "audio.webm",
     language: str | None = None,
     prompt: str | None = None,
+    _preprocessor: AudioPreprocessor | None = None,
 ) -> dict:
     """
-    Transcribe *audio_bytes* via the Groq Whisper API.
+    Preprocess *audio_bytes* then transcribe via the Groq Whisper API.
 
     Parameters
     ----------
-    audio_bytes : bytes
-        Raw audio data (WebM, MP3, MP4, OGG, WAV, FLAC, …).
-    filename : str
-        Passed to the multipart upload so the API can sniff the format.
-    language : str | None
-        ISO-639-1 hint (e.g. ``"en"``, ``"hi"``).  Leave None to auto-detect.
-    prompt : str | None
-        Optional preceding context to improve accuracy.
+    audio_bytes   : raw audio from the browser (any format FFmpeg can decode)
+    filename      : container hint forwarded to the Groq API
+    language      : ISO-639-1 hint (e.g. "en", "hi"); None → auto-detect.
+                    Falls back to WHISPER_LANGUAGE env var if set.
+    prompt        : optional preceding context to improve accuracy
+    _preprocessor : injected in tests; uses the module singleton by default
 
     Returns
     -------
-    dict  with keys ``text`` (str), ``language`` (str), and optionally ``duration`` (float).
+    dict with keys ``text`` (str), ``language`` (str), optionally ``duration`` (float).
     """
+    if not audio_bytes:
+        return _EMPTY
+
     settings = get_settings()
+
     if not settings.GROQ_API_KEY:
         logger.warning("speech_service: GROQ_API_KEY is not set — returning empty transcript")
         return _EMPTY
 
-    if not audio_bytes:
+    # ── 1. Determine language ──────────────────────────────────────────────
+    effective_language = language or settings.WHISPER_LANGUAGE or None
+
+    # ── 2. Preprocess audio ────────────────────────────────────────────────
+    logger.debug("speech_service: received audio chunk (%d bytes)", len(audio_bytes))
+
+    proc = _preprocessor or _default_preprocessor
+
+    # Derive the FFmpeg input format from the filename extension
+    input_format = _format_from_filename(filename)
+
+    logger.debug("speech_service: preprocessing audio (format=%s)", input_format)
+    try:
+        cleaned_bytes = await proc.clean_audio(audio_bytes, input_format=input_format)
+    except (AudioPreprocessingError, FFmpegNotFoundError) as exc:
+        logger.error("speech_service: audio preprocessing failed: %s", exc, exc_info=True)
+        return _EMPTY
+    except Exception as exc:
+        logger.error("speech_service: unexpected preprocessing error: %s", exc, exc_info=True)
         return _EMPTY
 
+    logger.debug("speech_service: audio preprocessing completed (%d bytes WAV)", len(cleaned_bytes))
+
+    # ── 3. Transcribe cleaned WAV ──────────────────────────────────────────
     model = _choose_model()
     client = get_groq_client()
 
+    logger.debug("speech_service: transcribing audio (model=%s)", model)
     try:
-        file_tuple = (filename, io.BytesIO(audio_bytes))
+        # Always send as WAV after preprocessing
+        file_tuple = ("audio.wav", io.BytesIO(cleaned_bytes))
 
         kwargs: dict = dict(
             file=file_tuple,
             model=model,
             response_format="verbose_json",
         )
-        if language:
-            kwargs["language"] = language
+        if effective_language:
+            kwargs["language"] = effective_language
         if prompt:
             kwargs["prompt"] = prompt
 
@@ -104,14 +145,34 @@ async def transcribe_audio(
             result["duration"] = duration
 
         logger.debug(
-            "speech_service: transcribed %d bytes → %d chars (model=%s lang=%s)",
-            len(audio_bytes),
+            "speech_service: whisper transcription completed — %d chars (lang=%s model=%s)",
             len(result["text"]),
-            model,
             result["language"],
+            model,
         )
         return result
 
     except Exception as exc:
         logger.error("speech_service: transcription failed: %s", exc)
         return _EMPTY
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _format_from_filename(filename: str) -> str:
+    """
+    Map a filename extension to an FFmpeg input format string.
+    Falls back to 'webm' (most common browser MediaRecorder output).
+    """
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return {
+        "webm": "webm",
+        "ogg":  "ogg",
+        "mp4":  "mp4",
+        "m4a":  "mp4",
+        "wav":  "wav",
+        "mp3":  "mp3",
+        "flac": "flac",
+    }.get(ext, "webm")

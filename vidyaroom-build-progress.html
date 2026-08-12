@@ -1,0 +1,339 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VidyaRoom — Build Progress</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    background: #ffffff;
+    color: #1f2328;
+    padding: 32px 24px 48px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #57606a; font-size: 13px; margin-bottom: 32px; }
+
+  /* ── Summary bar ── */
+  .summary {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    background: #f7f8fa; border: 1px solid #e5e7eb;
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 32px;
+  }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat-num { font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-label { font-size: 11px; color: #57606a; text-transform: uppercase; letter-spacing: .05em; }
+  .done  { color: #1a7f37; }
+  .prog  { color: #3b82d4; }
+  .todo  { color: #57606a; }
+
+  /* ── Section headers ── */
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase;
+       letter-spacing: .07em; color: #57606a; margin: 28px 0 10px; }
+
+  /* ── Phase cards ── */
+  .phase {
+    border: 1px solid #e5e7eb; border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .phase-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; background: #f7f8fa;
+  }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 12px; white-space: nowrap; flex-shrink: 0;
+  }
+  .badge-done  { background: #dafbe1; color: #1a7f37; }
+  .badge-part  { background: #dbeafe; color: #1d4ed8; }
+  .badge-todo  { background: #f3f4f6; color: #57606a; }
+  .phase-title { font-weight: 600; font-size: 14px; }
+  .phase-tag   { font-size: 11px; color: #57606a; margin-left: auto; flex-shrink: 0; }
+
+  .phase-body { padding: 12px 16px; border-top: 1px solid #e5e7eb; }
+  .phase-body p { color: #57606a; font-size: 13px; margin-bottom: 8px; }
+
+  ul.items { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  ul.items li { font-size: 13px; display: flex; align-items: flex-start; gap: 8px; }
+  ul.items li::before { flex-shrink: 0; margin-top: 2px; }
+  li.done::before  { content: "✓"; color: #1a7f37; font-weight: 700; }
+  li.part::before  { content: "◑"; color: #3b82d4; font-weight: 700; }
+  li.todo::before  { content: "○"; color: #bbb; }
+
+  .files {
+    margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .file {
+    font-size: 11px; font-family: "Cascadia Code", "Fira Code", monospace;
+    background: #f7f8fa; border: 1px solid #e5e7eb;
+    border-radius: 4px; padding: 2px 7px; color: #57606a;
+  }
+
+  hr { border: none; border-top: 1px solid #e5e7eb; margin: 32px 0 24px; }
+
+  footer {
+    margin-top: 40px; padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center; font-size: 12px; color: #57606a;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>VidyaRoom — Build Progress</h1>
+  <p class="subtitle">Real-time lecture transcription &amp; assistant · FastAPI + Next.js + Groq</p>
+
+  <div class="summary">
+    <div class="stat"><span class="stat-num done">5</span><span class="stat-label">Phases done</span></div>
+    <div class="stat"><span class="stat-num todo">4</span><span class="stat-label">Phases remaining</span></div>
+    <div class="stat"><span class="stat-num">22</span><span class="stat-label">Tests passing</span></div>
+    <div class="stat"><span class="stat-num">0</span><span class="stat-label">TS errors</span></div>
+  </div>
+
+  
+  <h2>✓ Completed</h2>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-done">Done</span>
+      <span class="phase-title">Phase 1 — FastAPI Skeleton</span>
+      <span class="phase-tag">Backend</span>
+    </div>
+    <div class="phase-body">
+      <ul class="items">
+        <li class="done">FastAPI app with CORS, lifespan, structured logging</li>
+        <li class="done">GET /health endpoint</li>
+        <li class="done">Stub routers: /api/lectures/, /api/qa/ask, /ws/{id}</li>
+        <li class="done">pydantic-settings config (Settings class)</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/main.py</span>
+        <span class="file">app/config.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-done">Done</span>
+      <span class="phase-title">Phase 2 — Database Layer</span>
+      <span class="phase-tag">Backend</span>
+    </div>
+    <div class="phase-body">
+      <ul class="items">
+        <li class="done">SQLAlchemy async engine with auto URL coercion (postgres:// → postgresql+psycopg://)</li>
+        <li class="done">Models: Lecture, LectureEvent, Note</li>
+        <li class="done">Services: lecture_service, event_service</li>
+        <li class="done">Full REST CRUD: POST /lectures/start, GET /{id}, POST /{id}/complete, GET /{id}/events</li>
+        <li class="done">Pydantic schemas for all models</li>
+        <li class="done">LangGraph GraphState stub</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/database/database.py</span>
+        <span class="file">app/database/models.py</span>
+        <span class="file">app/services/lecture_service.py</span>
+        <span class="file">app/services/event_service.py</span>
+        <span class="file">app/schemas/</span>
+        <span class="file">tests/test_lectures.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-done">Done</span>
+      <span class="phase-title">Phase 3 — WebSocket Infrastructure</span>
+      <span class="phase-tag">Backend</span>
+    </div>
+    <div class="phase-body">
+      <ul class="items">
+        <li class="done">WebSocketManager singleton (multi-client broadcast per lecture)</li>
+        <li class="done">Full message protocol: audio_chunk, frame, lecture_completed, question, ping/pong</li>
+        <li class="done">Background task handlers wired for each message type</li>
+        <li class="done">Auto-persist events to DB on receipt</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/api/websocket.py</span>
+        <span class="file">app/services/websocket_manager.py</span>
+        <span class="file">tests/test_websocket.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-done">Done</span>
+      <span class="phase-title">Phase 4 — Frontend Shell</span>
+      <span class="phase-tag">Frontend · Next.js 15</span>
+    </div>
+    <div class="phase-body">
+      <ul class="items">
+        <li class="done">Next.js 15 + Tailwind CSS dark-theme layout</li>
+        <li class="done">Video file picker (any MP4/WebM/MOV) with object URL preview</li>
+        <li class="done">useLecture hook — start / complete lecture via REST API</li>
+        <li class="done">useLectureWebSocket hook — connect, auto-reconnect, keepalive ping</li>
+        <li class="done">Panels: VideoPlayer, LiveTranscription, TopicPanel, ImportantEvents, NotesPanel, ChatPanel</li>
+        <li class="done">lib/api.ts — typed fetch wrapper for all backend endpoints</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/page.tsx</span>
+        <span class="file">hooks/useLecture.ts</span>
+        <span class="file">hooks/useLectureWebSocket.ts</span>
+        <span class="file">components/</span>
+        <span class="file">lib/api.ts</span>
+        <span class="file">types/</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-done">Done</span>
+      <span class="phase-title">Phase 5 — Speech-to-Text (Groq Whisper)</span>
+      <span class="phase-tag">Backend + Frontend</span>
+    </div>
+    <div class="phase-body">
+      <ul class="items">
+        <li class="done">AsyncGroq singleton client (groq_service.py)</li>
+        <li class="done">transcribe_audio() — async, whisper-large-v3-turbo, verbose_json, language detection</li>
+        <li class="done">useAudioCapture hook — Web Audio API taps video element, stop/restart cycle every 5s → complete decodable WebM blobs</li>
+        <li class="done">speech_event broadcast → LiveTranscription panel with timestamps</li>
+        <li class="done">10 unit tests (model selection, key guard, success path, error resilience)</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/integrations/groq_service.py</span>
+        <span class="file">app/services/speech_service.py</span>
+        <span class="file">hooks/useAudioCapture.ts</span>
+        <span class="file">components/LiveTranscription.tsx</span>
+        <span class="file">tests/test_speech.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <h2>○ Remaining</h2>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-todo">Todo</span>
+      <span class="phase-title">Phase 6 — Vision / Board OCR</span>
+      <span class="phase-tag">Backend</span>
+    </div>
+    <div class="phase-body">
+      <p>Capture video frames, detect significant changes, OCR the board/slides text.</p>
+      <ul class="items">
+        <li class="todo">OpenCV frame change detection (skip duplicate frames)</li>
+        <li class="todo">Tesseract OCR on significant frames</li>
+        <li class="todo">Formula detection heuristic</li>
+        <li class="todo">board_event broadcast → ImportantEvents panel</li>
+        <li class="todo">Frontend: capture video frame every N seconds, send as base64</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/services/vision_service.py</span>
+        <span class="file">app/services/ocr_service.py</span>
+        <span class="file">hooks/useFrameCapture.ts</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-todo">Todo</span>
+      <span class="phase-title">Phase 7 — Live AI Graph (Translation + Topic)</span>
+      <span class="phase-tag">Backend · LangGraph + Groq LLM</span>
+    </div>
+    <div class="phase-body">
+      <p>Process each speech_event through a LangGraph pipeline for real-time translation and topic tracking.</p>
+      <ul class="items">
+        <li class="todo">Supervisor node — routes speech/board events to correct agent</li>
+        <li class="todo">Translation node — Groq LLM translates to TARGET_LANGUAGE</li>
+        <li class="todo">Topic detection node — identifies current topic + subtopic</li>
+        <li class="todo">translation + topic_update broadcast → LiveTranslation + TopicPanel</li>
+        <li class="todo">Wire live_graph.py into _handle_audio pipeline</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/graph/live_graph.py</span>
+        <span class="file">app/graph/nodes/supervisor.py</span>
+        <span class="file">app/graph/nodes/translation.py</span>
+        <span class="file">app/graph/nodes/router.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-todo">Todo</span>
+      <span class="phase-title">Phase 8 — Notes Generation Agent</span>
+      <span class="phase-tag">Backend · LangGraph + Groq LLM</span>
+    </div>
+    <div class="phase-body">
+      <p>When lecture_completed fires, summarise all speech + board events into structured notes.</p>
+      <ul class="items">
+        <li class="todo">Fetch all events for the lecture from DB</li>
+        <li class="todo">Notes node — Groq LLM generates structured Markdown notes</li>
+        <li class="todo">Persist notes to NoteModel</li>
+        <li class="todo">notes broadcast → NotesPanel</li>
+        <li class="todo">Wire run_notes_graph() in notes_graph.py</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/graph/notes_graph.py</span>
+        <span class="file">app/graph/nodes/notes.py</span>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="phase">
+    <div class="phase-header">
+      <span class="badge badge-todo">Todo</span>
+      <span class="phase-title">Phase 9 — Q&amp;A Agent</span>
+      <span class="phase-tag">Backend · LangGraph + Groq LLM</span>
+    </div>
+    <div class="phase-body">
+      <p>Answer student questions in real time, grounded in the lecture transcript and board events.</p>
+      <ul class="items">
+        <li class="todo">QA node — retrieves relevant events as context</li>
+        <li class="todo">Groq LLM answers grounded in lecture content</li>
+        <li class="todo">answer broadcast → ChatPanel</li>
+        <li class="todo">Wire run_qa_graph() in qa_graph.py</li>
+        <li class="todo">POST /lectures/{id}/questions REST endpoint</li>
+      </ul>
+      <div class="files">
+        <span class="file">app/graph/qa_graph.py</span>
+        <span class="file">app/graph/nodes/qa.py</span>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <h2>Current test coverage</h2>
+  <div class="phase">
+    <div class="phase-body" style="border-top:none">
+      <ul class="items">
+        <li class="done">tests/test_health.py — 2 tests</li>
+        <li class="done">tests/test_lectures.py — 7 tests (CRUD, events, notes stub, Q&amp;A stub)</li>
+        <li class="done">tests/test_websocket.py — 3 tests (connect, ping/pong, lecture_completed)</li>
+        <li class="done">tests/test_speech.py — 10 tests (model selection, key guard, success, error handling)</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>Made with IBM Bob</footer>
+</div>
+</body>
+</html>

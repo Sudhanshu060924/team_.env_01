@@ -10,18 +10,29 @@ websockets>=12.0
 sqlalchemy>=2.0
 psycopg[binary]>=3.1
 
-# Phase 5 — Speech (Groq Whisper)
+# Phase 5 — Speech (Groq Whisper + FFmpeg audio preprocessing)
+# NOTE: FFmpeg must be installed as a system dependency (not via pip).
+#   macOS:   brew install ffmpeg
+#   Ubuntu:  sudo apt install ffmpeg
+#   Windows: winget install ffmpeg
 groq>=0.9
 
-# Phase 6+ — Vision / AI (install when needed)
+# Phase 6 — Vision / OCR
+# NOTE: Tesseract OCR binary must also be installed as a system dependency.
+#   macOS:   brew install tesseract
+#   Ubuntu:  sudo apt install tesseract-ocr
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+opencv-python-headless>=4.9
+pillow>=10.3
+pytesseract>=0.3
+
+# Phase 8+ — LangGraph / AI agents (install when needed)
 # langgraph>=0.2
 # langchain-groq>=0.1
 # faster-whisper>=1.0
-# opencv-python-headless>=4.9
-# pillow>=10.3
-# pytesseract>=0.3
 
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.23
 httpx>=0.27.0
+numpy>=1.26          # used only in test_audio_preprocessor.py to generate WAV fixtures

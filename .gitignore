@@ -75,3 +75,6 @@ frontend/public/lectures/*.webm
 frontend/public/lectures/*.mov
 frontend/public/lectures/*.mkv
 !frontend/public/lectures/.gitkeep
+
+# ── Debug audio dumps (SAVE_DEBUG_AUDIO=true) ────────────────────────────────
+backend/debug_audio/

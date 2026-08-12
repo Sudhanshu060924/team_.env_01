@@ -20,6 +20,14 @@ async def lifespan(app: FastAPI):
         settings.TARGET_LANGUAGE,
     )
 
+    # Verify FFmpeg is available (required for audio preprocessing)
+    from app.services.audio_preprocessor import check_ffmpeg, FFmpegNotFoundError
+    try:
+        check_ffmpeg()
+    except FFmpegNotFoundError as exc:
+        logger.error("STARTUP ERROR: %s", exc)
+        raise  # abort startup with a clear message
+
     # Create database tables on startup
     from app.database.database import create_tables
     await create_tables()

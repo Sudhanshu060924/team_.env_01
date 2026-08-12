@@ -15,9 +15,23 @@ class Settings(BaseSettings):
     # Accepted values: "turbo"  → whisper-large-v3-turbo  (default, faster)
     #                  "large"  → whisper-large-v3         (most accurate)
     WHISPER_MODEL: str = "turbo"
+    # ISO-639-1 language hint forwarded to Whisper (leave blank for auto-detect)
+    WHISPER_LANGUAGE: str = ""
 
     # Localisation
     TARGET_LANGUAGE: str = "hi"
+
+    # Audio preprocessing pipeline (Phase 5 — FFmpeg)
+    AUDIO_SAMPLE_RATE: int = 16000   # Hz — target sample rate for Whisper
+    AUDIO_CHANNELS: int = 1          # 1 = mono
+    AUDIO_HIGHPASS: int = 100        # Hz — removes low-frequency rumble
+    AUDIO_LOWPASS: int = 8000        # Hz — removes high-frequency hiss
+    AUDIO_NOISE_REDUCTION: int = 12  # afftdn nr= value (0–97); keep moderate
+    AUDIO_NOISE_FLOOR: int = -40     # afftdn nf= value (dBFS)
+
+    # Set to true during local development to save cleaned audio chunks
+    # to backend/debug_audio/ for inspection.
+    SAVE_DEBUG_AUDIO: bool = False
 
     # Frontend URLs (optional, used in CORS / links)
     NEXT_PUBLIC_API_URL: str = "http://localhost:8000"

@@ -7,16 +7,24 @@ import { useAudioCapture } from '@/hooks/useAudioCapture'
 import LectureHeader from '@/components/LectureHeader'
 import VideoPlayer from '@/components/VideoPlayer'
 import LiveTranscription, { TranscriptLine } from '@/components/LiveTranscription'
+import LiveTranslation from '@/components/LiveTranslation'
 import TopicPanel from '@/components/TopicPanel'
 import ImportantEvents from '@/components/ImportantEvents'
 import NotesPanel from '@/components/NotesPanel'
 import ChatPanel from '@/components/ChatPanel'
-import { WSMessage, TopicState, ImportantEvent, ChatMessage } from '@/types/ai'
+import {
+  WSMessage,
+  TopicState,
+  ImportantEvent,
+  ChatMessage,
+  TranslationLine,
+  TargetLanguage,
+} from '@/types/ai'
 
 export default function HomePage() {
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoRef    = useRef<HTMLVideoElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const uid = useId()
+  const uid         = useId()
 
   // ── Lecture session ────────────────────────────────────────────────
   const { lecture, status: lectureStatus, error, startLecture, completeLecture } = useLecture()
@@ -24,15 +32,17 @@ export default function HomePage() {
 
   // ── Selected video file ────────────────────────────────────────────
   const [videoFile, setVideoFile] = useState<File | null>(null)
-  const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [videoSrc,  setVideoSrc]  = useState<string | null>(null)
 
   // ── AI state ───────────────────────────────────────────────────────
-  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([])
-  const [topic, setTopic] = useState<TopicState | null>(null)
-  const [importantEvents, setImportantEvents] = useState<ImportantEvent[]>([])
-  const [notes, setNotes] = useState<string | null>(null)
+  const [transcriptLines,  setTranscriptLines]  = useState<TranscriptLine[]>([])
+  const [translationLines, setTranslationLines] = useState<TranslationLine[]>([])
+  const [selectedLanguage, setSelectedLanguage] = useState<TargetLanguage>('english')
+  const [topic,            setTopic]            = useState<TopicState | null>(null)
+  const [importantEvents,  setImportantEvents]  = useState<ImportantEvent[]>([])
+  const [notes,            setNotes]            = useState<string | null>(null)
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false)
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatMessages,     setChatMessages]     = useState<ChatMessage[]>([])
 
   // ── Video file picker ──────────────────────────────────────────────
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -50,15 +60,31 @@ export default function HomePage() {
   // ── WebSocket message router ───────────────────────────────────────
   const handleWsMessage = useCallback((msg: WSMessage) => {
     switch (msg.type) {
-      // Live transcription from Groq Whisper (Phase 5)
+
+      // ── Live transcription (Groq Whisper) ──────────────────────
       case 'speech_event':
         if (msg.content) {
           setTranscriptLines((prev) => [
             ...prev,
             {
               timestamp: msg.timestamp ?? 0,
-              text: msg.content!,
-              language: (msg.metadata as Record<string, string>)?.language ?? 'en',
+              text:      msg.content!,
+              language:  (msg.metadata as Record<string, string>)?.language ?? 'en',
+            },
+          ])
+        }
+        break
+
+      // ── Live translation (Translation Agent) ───────────────────
+      case 'translation':
+        if (msg.content) {
+          setTranslationLines((prev) => [
+            ...prev,
+            {
+              timestamp: msg.timestamp ?? 0,
+              content:   msg.content!,
+              language:  ((msg.metadata as Record<string, string>)?.language ?? 'english') as TargetLanguage,
+              source:    (msg.metadata as Record<string, string>)?.source,
             },
           ])
         }
@@ -67,7 +93,7 @@ export default function HomePage() {
       case 'topic_update':
         if (msg.content) {
           setTopic({
-            topic: msg.content,
+            topic:    msg.content,
             subtopic: (msg.metadata as Record<string, string>)?.subtopic ?? '',
             timestamp: msg.timestamp ?? 0,
           })
@@ -80,9 +106,9 @@ export default function HomePage() {
           setImportantEvents((prev) => [
             ...prev,
             {
-              id: `${uid}-${Date.now()}`,
-              timestamp: msg.timestamp ?? 0,
-              content: msg.content!,
+              id:        `${uid}-${Date.now()}`,
+              timestamp:  msg.timestamp ?? 0,
+              content:    msg.content!,
               isFormula: !!(msg.metadata as Record<string, boolean>)?.is_formula,
             },
           ])
@@ -105,10 +131,10 @@ export default function HomePage() {
           setChatMessages((prev) => [
             ...prev,
             {
-              id: `ai-${Date.now()}`,
-              role: 'ai',
-              content: msg.content!,
-              timestamp: Date.now(),
+              id:        `ai-${Date.now()}`,
+              role:      'ai',
+              content:    msg.content!,
+              timestamp:  Date.now(),
             },
           ])
         }
@@ -131,9 +157,21 @@ export default function HomePage() {
     videoRef,
     lectureId: lecture?.lecture_id ?? null,
     sendMessage,
-    enabled: isLive,
-    chunkMs: 5000,
+    enabled:   isLive,
+    chunkMs:   5000,
   })
+
+  // ── Language change → notify backend ──────────────────────────────
+  const handleLanguageChange = useCallback((lang: TargetLanguage) => {
+    setSelectedLanguage(lang)
+    if (lecture) {
+      sendMessage({
+        type:            'language_change',
+        lecture_id:       lecture.lecture_id,
+        target_language:  lang,
+      })
+    }
+  }, [lecture, sendMessage])
 
   // ── Lecture start ──────────────────────────────────────────────────
   const handleStart = async () => {
@@ -148,9 +186,9 @@ export default function HomePage() {
   const handleVideoEnded = useCallback(() => {
     if (!lecture) return
     sendMessage({
-      type: 'lecture_completed',
-      lecture_id: lecture.lecture_id,
-      timestamp: videoRef.current?.duration ?? 0,
+      type:       'lecture_completed',
+      lecture_id:  lecture.lecture_id,
+      timestamp:   videoRef.current?.duration ?? 0,
     })
     completeLecture()
   }, [lecture, sendMessage, completeLecture])
@@ -161,25 +199,26 @@ export default function HomePage() {
     setChatMessages((prev) => [
       ...prev,
       {
-        id: `student-${Date.now()}`,
-        role: 'student',
-        content: question,
-        timestamp: Date.now(),
+        id:        `student-${Date.now()}`,
+        role:      'student',
+        content:    question,
+        timestamp:  Date.now(),
       },
     ])
     sendMessage({
-      type: 'question',
-      lecture_id: lecture.lecture_id,
-      content: question,
-      timestamp: videoRef.current?.currentTime ?? 0,
+      type:       'question',
+      lecture_id:  lecture.lecture_id,
+      content:     question,
+      timestamp:   videoRef.current?.currentTime ?? 0,
     })
   }, [lecture, sendMessage])
 
   const isCompleted = lectureStatus === 'completed'
-  const canStart = lectureStatus === 'idle' || lectureStatus === 'error' || lectureStatus === 'starting'
+  const canStart    = lectureStatus === 'idle' || lectureStatus === 'error' || lectureStatus === 'starting'
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+
       {/* ── Header ──────────────────────────────────────────────── */}
       <LectureHeader
         title={lecture?.title ?? 'VidyaRoom'}
@@ -258,7 +297,8 @@ export default function HomePage() {
       {(isLive || isCompleted) && (
         <>
           <main className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 min-h-0">
-            {/* Left column */}
+
+            {/* Left column: video + transcription + translation */}
             <div className="lg:col-span-2 flex flex-col gap-4">
               <VideoPlayer
                 ref={videoRef}
@@ -266,6 +306,12 @@ export default function HomePage() {
                 onEnded={handleVideoEnded}
               />
               <LiveTranscription lines={transcriptLines} />
+              <LiveTranslation
+                lines={translationLines}
+                selectedLanguage={selectedLanguage}
+                onLanguageChange={handleLanguageChange}
+                disabled={!isLive}
+              />
             </div>
 
             {/* Right column */}

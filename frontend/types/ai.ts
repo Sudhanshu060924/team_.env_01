@@ -1,5 +1,14 @@
 import { Lecture, LectureEvent } from './lecture'
 
+// ── Translation language options ──────────────────────────────────────────
+export type TargetLanguage = 'english' | 'hindi' | 'hinglish'
+
+export const LANGUAGE_OPTIONS: { value: TargetLanguage; label: string }[] = [
+  { value: 'english',  label: 'English' },
+  { value: 'hindi',    label: 'Hindi' },
+  { value: 'hinglish', label: 'Hinglish' },
+]
+
 // ── WebSocket message types (server → client) ─────────────────────────────
 
 export interface WSMessage {
@@ -67,6 +76,14 @@ export interface AIResult {
   metadata?: Record<string, unknown>
 }
 
+export interface TranslationLine {
+  timestamp: number
+  content: string
+  language: TargetLanguage
+  source?: string   // "translation_agent" | "language_change"
+}
+
+/** @deprecated — kept for backward compat; use TranslationLine */
 export interface Translation {
   timestamp: number
   original: string

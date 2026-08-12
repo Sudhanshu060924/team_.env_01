@@ -2,19 +2,23 @@
 WebSocket endpoint: /ws/lectures/{lecture_id}
 
 Message protocol (client → server):
-  { "type": "audio_chunk",        "lecture_id": "...", "timestamp": 12.5, "data": "<base64>" }
-  { "type": "frame",              "lecture_id": "...", "timestamp": 14.0, "data": "<base64>" }
-  { "type": "lecture_completed",  "lecture_id": "...", "timestamp": 3600 }
+  { "type": "audio_chunk",       "lecture_id": "...", "timestamp": 12.5, "data": "<base64>", "filename": "audio.webm" }
+  { "type": "frame",             "lecture_id": "...", "timestamp": 14.0, "data": "<base64>" }
+  { "type": "lecture_completed", "lecture_id": "...", "timestamp": 3600 }
+  { "type": "language_change",   "lecture_id": "...", "target_language": "hinglish" }
+  { "type": "question",          "lecture_id": "...", "content": "..." }
   { "type": "ping" }
 
 Message protocol (server → client):
-  { "type": "connected",       "lecture_id": "...", "message": "..." }
-  { "type": "translation",     "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
-  { "type": "topic_update",    "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
-  { "type": "important_event", "lecture_id": "...", "timestamp": ..., "content": "..." }
-  { "type": "notes",           "lecture_id": "...", "content": "..." }
-  { "type": "answer",          "lecture_id": "...", "content": "..." }
-  { "type": "error",           "message": "..." }
+  { "type": "connected",         "lecture_id": "...", "message": "..." }
+  { "type": "speech_event",      "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
+  { "type": "translation",       "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {"language": "...", "source": "translation_agent"} }
+  { "type": "translation_error", "lecture_id": "...", "timestamp": ..., "message": "Translation temporarily unavailable" }
+  { "type": "topic_update",      "lecture_id": "...", "timestamp": ..., "content": "...", "metadata": {...} }
+  { "type": "important_event",   "lecture_id": "...", "timestamp": ..., "content": "..." }
+  { "type": "notes",             "lecture_id": "...", "content": "..." }
+  { "type": "answer",            "lecture_id": "...", "content": "..." }
+  { "type": "error",             "message": "..." }
   { "type": "pong" }
 """
 import asyncio
@@ -25,6 +29,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from app.services.websocket_manager import manager
+from app.graph.state import VALID_LANGUAGES
+from app.services.lecture_session import session_store
+from app.graph.nodes.translation import translate
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,6 +40,9 @@ router = APIRouter()
 @router.websocket("/ws/lectures/{lecture_id}")
 async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
     await manager.connect(lecture_id, websocket)
+
+    # Ensure a session state exists for this lecture
+    session_store.get_or_create(lecture_id)
 
     # Confirm connection
     await manager.send_personal(websocket, {
@@ -51,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
                 await manager.send_personal(websocket, {"type": "pong"})
                 continue
 
-            # ── audio chunk → speech pipeline ──────────────────────────
+            # ── audio chunk → speech + translation pipeline ─────────────
             if msg_type == "audio_chunk":
                 asyncio.create_task(
                     _handle_audio(lecture_id, data)
@@ -69,6 +79,13 @@ async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
             if msg_type == "lecture_completed":
                 asyncio.create_task(
                     _handle_lecture_completed(lecture_id, data)
+                )
+                continue
+
+            # ── student language selection change ──────────────────────
+            if msg_type == "language_change":
+                asyncio.create_task(
+                    _handle_language_change(lecture_id, data, websocket)
                 )
                 continue
 
@@ -95,7 +112,14 @@ async def websocket_endpoint(websocket: WebSocket, lecture_id: str):
 # ---------------------------------------------------------------------------
 
 async def _handle_audio(lecture_id: str, data: dict) -> None:
-    """Receive an audio chunk, transcribe, persist event, broadcast results."""
+    """
+    1. Decode audio bytes
+    2. Transcribe via Groq Whisper (with FFmpeg preprocessing)
+    3. Persist speech LectureEvent
+    4. Broadcast speech_event
+    5. Update session context + run Translation Agent
+    6. Broadcast translation event
+    """
     timestamp = data.get("timestamp", 0.0)
     audio_b64 = data.get("data", "")
 
@@ -127,17 +151,96 @@ async def _handle_audio(lecture_id: str, data: dict) -> None:
         async for db in get_db():
             await event_svc.save_event(db, event)
 
-        # Push to AI graph (Phase 7) — stub broadcast for now
+        # Broadcast raw transcript to UI
         await manager.broadcast(lecture_id, {
             "type": "speech_event",
             "lecture_id": lecture_id,
             "timestamp": timestamp,
             "content": text,
+            "metadata": event.metadata,
+        })
+
+        # ── Translation pipeline ────────────────────────────────────
+        asyncio.create_task(
+            _run_translation(lecture_id, text, timestamp)
+        )
+
+    except Exception as exc:
+        logger.error("Audio handler error lecture=%s: %s", lecture_id, exc, exc_info=True)
+        await manager.broadcast(lecture_id, {"type": "error", "message": f"Speech error: {exc}"})
+
+
+async def _run_translation(lecture_id: str, transcript: str, timestamp: float) -> None:
+    """
+    Update session context and call the Translation Agent.
+    Runs as a separate task so it never blocks the next audio chunk.
+    """
+    try:
+        # Update bounded context window
+        state = session_store.add_transcript(lecture_id, transcript, timestamp)
+
+        result = await translate(state)
+        if not result:
+            # Translation returned nothing (e.g. API key missing) — skip broadcast
+            return
+
+        translated = result["translated"]
+        lang       = result["language"]
+
+        # Persist the translation back into session for next-turn context
+        session_store.set_translation(lecture_id, translated)
+
+        await manager.broadcast(lecture_id, {
+            "type":      "translation",
+            "lecture_id": lecture_id,
+            "timestamp":  timestamp,
+            "content":    translated,
+            "metadata":  {"language": lang, "source": "translation_agent"},
         })
 
     except Exception as exc:
-        logger.error("Audio handler error lecture=%s: %s", lecture_id, exc)
-        await manager.broadcast(lecture_id, {"type": "error", "message": f"Speech error: {exc}"})
+        logger.error("Translation pipeline error lecture=%s: %s", lecture_id, exc, exc_info=True)
+        await manager.broadcast(lecture_id, {
+            "type":       "translation_error",
+            "lecture_id": lecture_id,
+            "timestamp":  timestamp,
+            "message":    "Translation temporarily unavailable",
+        })
+
+
+async def _handle_language_change(lecture_id: str, data: dict, websocket: WebSocket) -> None:
+    """
+    Store the new target language for this lecture session.
+    Optionally retranslate the last transcript into the new language immediately.
+    """
+    raw_lang = data.get("target_language", "").lower().strip()
+
+    if raw_lang not in VALID_LANGUAGES:
+        await manager.send_personal(websocket, {
+            "type":    "error",
+            "message": f"Invalid language '{raw_lang}'. Allowed: english, hindi, hinglish.",
+        })
+        return
+
+    state = session_store.set_language(lecture_id, raw_lang)
+    logger.info("WS language_change lecture=%s → %s", lecture_id, raw_lang)
+
+    # If there is a recent transcript, retranslate it into the new language immediately
+    # so the student sees the panel refresh rather than waiting for the next chunk.
+    if state.last_transcript:
+        try:
+            result = await translate(state)
+            if result:
+                session_store.set_translation(lecture_id, result["translated"])
+                await manager.send_personal(websocket, {
+                    "type":      "translation",
+                    "lecture_id": lecture_id,
+                    "timestamp":  state.last_timestamp,
+                    "content":    result["translated"],
+                    "metadata":  {"language": result["language"], "source": "language_change"},
+                })
+        except Exception as exc:
+            logger.error("Retranslation on language change failed lecture=%s: %s", lecture_id, exc)
 
 
 async def _handle_frame(lecture_id: str, data: dict) -> None:
@@ -212,7 +315,6 @@ async def _handle_lecture_completed(lecture_id: str, data: dict) -> None:
             await event_svc.save_event(db, event)
             await lecture_svc.complete_lecture(db, lecture_id)
 
-        # Trigger notes generation — wired in Phase 8
         await manager.broadcast(lecture_id, {
             "type": "lecture_completed",
             "lecture_id": lecture_id,
@@ -236,7 +338,6 @@ async def _handle_question(lecture_id: str, data: dict, websocket: WebSocket) ->
     question = data.get("content", "")
 
     try:
-        # Phase 9 hook (no-op until graph is wired)
         from app.graph.qa_graph import run_qa_graph
         answer = await run_qa_graph(lecture_id, question)
         await manager.send_personal(websocket, {
