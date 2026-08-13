@@ -75,7 +75,7 @@ const studentNav: NavItem[] = [
 const teacherNav: NavItem[] = [
   { label: 'Dashboard',      href: '/teacher/dashboard',         icon: <IconDashboard /> },
   { label: 'My Lectures',    href: '/teacher/lectures',          icon: <IconLectures /> },
-  { label: 'Upload Lecture', href: '/',                          icon: <IconUpload /> },
+  { label: 'Upload Video',   href: '/teacher/upload',            icon: <IconUpload /> },
   { label: 'Student Doubts', href: '/teacher/doubts',            icon: <IconDoubts /> },
   { label: 'Notes',          href: '/teacher/notes',             icon: <IconNotes /> },
 ]

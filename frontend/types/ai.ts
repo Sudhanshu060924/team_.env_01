@@ -77,8 +77,18 @@ export interface AIResult {
   metadata?: Record<string, unknown>
 }
 
+export interface TranscriptChunk {
+  timestamp: number   // = start
+  start: number
+  end: number
+  content: string
+  language?: string
+}
+
 export interface TranslationLine {
-  timestamp: number
+  timestamp: number   // = start
+  start: number
+  end: number
   content: string
   language: TargetLanguage
   source?: string   // "translation_agent" | "language_change"

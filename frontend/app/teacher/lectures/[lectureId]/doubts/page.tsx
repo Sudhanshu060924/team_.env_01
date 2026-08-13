@@ -9,6 +9,7 @@ import AppShell from '@/components/layout/AppShell'
 import AppHeader from '@/components/layout/AppHeader'
 import Button from '@/components/ui/Button'
 import Avatar from '@/components/ui/Avatar'
+import DoubtAnalyticsPanel from '@/components/lecture/DoubtAnalyticsPanel'
 
 export default function TeacherLectureDoubtsPage() {
   const { lectureId } = useParams<{ lectureId: string }>()
@@ -172,28 +173,35 @@ export default function TeacherLectureDoubtsPage() {
         subtitle="Review and respond to student questions"
       />
 
-      <div className="flex-1 overflow-hidden flex flex-col min-h-0 px-6 py-6">
+      <div className="flex-1 overflow-auto flex flex-col min-h-0 px-6 py-6 gap-6">
+        {/* Analytics panel — always visible */}
+        <DoubtAnalyticsPanel lectureId={lectureId} />
+
         {error && (
-          <p className="text-sm text-red-600 border border-red-200 bg-red-50 px-4 py-3 rounded mb-4">
+          <p className="text-sm text-red-600 border border-red-200 bg-red-50 px-4 py-3 rounded">
             {error}
           </p>
         )}
 
         {!error && threads.length === 0 && (
-          <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
+          <div className="flex items-center justify-center text-sm text-gray-500 py-4">
             No student doubts yet for this lecture.
           </div>
         )}
 
         {threads.length > 0 && (
-          <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
+          <div className="flex gap-5 min-h-0" style={{ height: '520px' }}>
             {/* ── Thread list ── */}
             <div className="w-60 shrink-0 flex flex-col gap-1 overflow-y-auto pr-1">
               <p className="text-[11px] uppercase tracking-widest text-gray-500 font-semibold mb-2 px-1">
                 Students ({threads.length})
               </p>
               {threads.map((t) => {
-                const unanswered = t.messages.every((m) => m.sender_role === 'student')
+                // Unanswered = all visible (non-AI) messages are from student only
+                const visibleMessages = t.messages.filter(
+                  (m) => m.sender_role === 'student' || m.sender_role === 'teacher'
+                )
+                const unanswered = visibleMessages.length > 0 && visibleMessages.every((m) => m.sender_role === 'student')
                 const isActive = activeThreadId === t.thread_id
                 return (
                   <button
@@ -217,8 +225,8 @@ export default function TeacherLectureDoubtsPage() {
                           {t.student.name}
                         </span>
                         <span className="block text-xs text-gray-500">
-                          {t.messages.length} message{t.messages.length !== 1 ? 's' : ''}
-                          {unanswered && t.messages.length > 0 && (
+                          {visibleMessages.length} message{visibleMessages.length !== 1 ? 's' : ''}
+                          {unanswered && (
                             <span className="ml-1.5 text-yellow-600 font-semibold">· Unanswered</span>
                           )}
                         </span>
@@ -245,7 +253,11 @@ export default function TeacherLectureDoubtsPage() {
                         {activeThread.student.name}
                       </span>
                       <span className="text-xs text-gray-500 ml-2">
-                        {activeThread.messages.length} message{activeThread.messages.length !== 1 ? 's' : ''}
+                        {activeThread.messages.filter(
+                          (m) => m.sender_role === 'student' || m.sender_role === 'teacher'
+                        ).length} message{activeThread.messages.filter(
+                          (m) => m.sender_role === 'student' || m.sender_role === 'teacher'
+                        ).length !== 1 ? 's' : ''}
                       </span>
                     </div>
                   </div>
@@ -255,7 +267,10 @@ export default function TeacherLectureDoubtsPage() {
                     {activeThread.messages.length === 0 && (
                       <p className="text-sm text-gray-500 italic">No messages yet.</p>
                     )}
-                    {activeThread.messages.map((msg) => {
+                    {activeThread.messages
+                      // Safety filter: teacher view shows only student ↔ teacher messages
+                      .filter((msg) => msg.sender_role === 'student' || msg.sender_role === 'teacher')
+                      .map((msg) => {
                       const isStudent = msg.sender_role === 'student'
                       return (
                         <div

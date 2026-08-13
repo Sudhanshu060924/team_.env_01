@@ -8,7 +8,8 @@ interface TranslationPanelProps {
   lines: TranslationLine[];
   selectedLanguage: TargetLanguage;
   onLanguageChange: (lang: TargetLanguage) => void;
-  disabled?: boolean;
+  onSeek?: (seconds: number) => void;
+  noSpeechDetected?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -27,7 +28,8 @@ export default function TranslationPanel({
   lines,
   selectedLanguage,
   onLanguageChange,
-  disabled = false,
+  onSeek,
+  noSpeechDetected = false,
 }: TranslationPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasNewContent, setHasNewContent] = useState(false);
@@ -59,7 +61,6 @@ export default function TranslationPanel({
         <LanguageSelector
           value={selectedLanguage}
           onChange={onLanguageChange}
-          disabled={disabled}
         />
       </div>
 
@@ -67,7 +68,9 @@ export default function TranslationPanel({
       <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4">
         {lines.length === 0 ? (
           <p className="text-sm text-gray-500 italic">
-            Waiting for translation…
+            {noSpeechDetected
+              ? "No speech detected in this video."
+              : "Waiting for translation…"}
           </p>
         ) : (
           <div className="flex flex-col gap-4">
@@ -75,9 +78,14 @@ export default function TranslationPanel({
               const isLatest = i === lines.length - 1;
               return (
                 <div key={i} className="flex gap-3 items-start">
-                  <span className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium">
-                    {formatTime(line.timestamp)}
-                  </span>
+                  <button
+                    onClick={() => onSeek?.(line.start ?? line.timestamp)}
+                    className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium hover:text-yellow-600 hover:underline transition-colors cursor-pointer"
+                    title={`Seek to ${formatTime(line.start ?? line.timestamp)}`}
+                    aria-label={`Seek video to ${formatTime(line.start ?? line.timestamp)}`}
+                  >
+                    {formatTime(line.start ?? line.timestamp)}
+                  </button>
                   <p
                     className={`text-sm leading-relaxed ${
                       isLatest ? "text-black font-medium" : "text-gray-700"

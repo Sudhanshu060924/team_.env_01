@@ -136,18 +136,35 @@ async def transcribe_audio(
 
         transcription = await client.audio.transcriptions.create(**kwargs)
 
-        result: dict = {
-            "text": (transcription.text or "").strip(),
-            "language": getattr(transcription, "language", "en") or "en",
-        }
+        text = (transcription.text or "").strip()
+        language = getattr(transcription, "language", "en") or "en"
+        result: dict = {"text": text, "language": language}
+
         duration = getattr(transcription, "duration", None)
         if duration is not None:
             result["duration"] = duration
 
+        # Extract per-segment timestamps from verbose_json response.
+        # Each segment: {"start": float, "end": float, "text": str}
+        raw_segments = getattr(transcription, "segments", None) or []
+        segments = []
+        for seg in raw_segments:
+            try:
+                seg_start = float(getattr(seg, "start", 0.0))
+                seg_end = float(getattr(seg, "end", seg_start + 3.0))
+                seg_text = (getattr(seg, "text", "") or "").strip()
+                if seg_text:
+                    segments.append({"start": seg_start, "end": seg_end, "text": seg_text})
+            except (TypeError, ValueError):
+                continue
+        if segments:
+            result["segments"] = segments
+
         logger.debug(
-            "speech_service: whisper transcription completed — %d chars (lang=%s model=%s)",
-            len(result["text"]),
-            result["language"],
+            "speech_service: whisper transcription completed — %d chars %d segments (lang=%s model=%s)",
+            len(text),
+            len(segments),
+            language,
             model,
         )
         return result

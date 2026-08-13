@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.1-8b-instant"
 
+    # Gemini — translation only (replaces Groq for translation)
+    GEMINI_API_KEY: str = ""
+    GEMINI_TRANSLATION_MODEL: str = "gemini-3.5-flash-lite"
+
     # Groq — Whisper speech-to-text (Phase 5)
     # Accepted values: "turbo"  → whisper-large-v3-turbo  (default, faster)
     #                  "large"  → whisper-large-v3         (most accurate)
@@ -46,7 +50,7 @@ class Settings(BaseSettings):
     # Comma-separated list of allowed CORS origins.
     # Use "*" only for public APIs that never set credentials.
     # Default covers local dev (Next.js dev server).
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # ── Groq rate-limit management ────────────────────────────────────────────
     # How often (seconds) topic detection may run at most.

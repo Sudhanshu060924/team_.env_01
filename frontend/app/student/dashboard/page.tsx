@@ -49,14 +49,14 @@ export default function StudentDashboard() {
       !search || l.title.toLowerCase().includes(search.toLowerCase())
     const matchTab =
       tab === 'all' ||
-      (tab === 'completed' && l.status === 'completed') ||
+      (tab === 'completed' && (l.status === 'completed' || l.status === 'available')) ||
       (tab === 'live' && l.status === 'live')
     return matchSearch && matchTab
   })
 
   const tabs: { id: TabFilter; label: string }[] = [
     { id: 'all', label: 'All Lectures' },
-    { id: 'completed', label: 'Completed' },
+    { id: 'completed', label: 'Available' },
     { id: 'live', label: 'In Progress' },
   ]
 

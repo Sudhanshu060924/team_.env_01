@@ -1,5 +1,5 @@
 import { Lecture, LectureCreate, LectureEvent } from '@/types/lecture'
-import { ChatThreadRead, TeacherThreadRead, ChatMessageRead } from '@/types/chat'
+import { ChatThreadRead, TeacherThreadRead, ChatMessageRead, AIChatResponse, LectureDoubtAnalytics } from '@/types/chat'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -90,15 +90,46 @@ export const api = {
       }
     ),
 
-  // ── Student chat endpoints ──────────────────────────────────────────────
+  /**
+   * Start (or reuse) the processing pipeline for a pre-recorded lecture.
+   * Idempotent — safe to call even if processing is already running or done.
+   */
+  processLecture: (lectureId: string) =>
+    request<{ status: string; lecture_id: string }>(
+      `/lectures/${lectureId}/process`,
+      { method: 'POST' }
+    ),
 
-  /** Get the authenticated student's own thread for this lecture */
-  getStudentChat: (lectureId: string) =>
+  // ── Student AI chat endpoints (Chat tab: student ↔ AI) ─────────────────
+
+  /** Get the authenticated student's full AI chat thread for this lecture */
+  getAIChat: (lectureId: string) =>
     request<ChatThreadRead>(`/lectures/${lectureId}/chat`),
 
-  /** Post a new student doubt message */
-  postStudentMessage: (lectureId: string, content: string) =>
-    request<ChatMessageRead>(`/lectures/${lectureId}/chat`, {
+  /**
+   * Post a student question to the AI chatbot.
+   * Returns both the student message and the AI reply.
+   */
+  askAI: (lectureId: string, content: string) =>
+    request<AIChatResponse>(`/lectures/${lectureId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
+
+  // ── Student doubt endpoints (Doubts tab: student ↔ teacher) ────────────
+
+  /**
+   * Get the student's doubt thread (only student + teacher messages, no AI).
+   */
+  getStudentDoubts: (lectureId: string) =>
+    request<ChatThreadRead>(`/lectures/${lectureId}/doubts`),
+
+  /**
+   * Post a student doubt to the teacher (does NOT call the AI chatbot).
+   * Returns the saved student message only.
+   */
+  sendDoubt: (lectureId: string, content: string) =>
+    request<ChatMessageRead>(`/lectures/${lectureId}/doubts`, {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
@@ -117,6 +148,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ content }),
       }
+    ),
+
+  /** Get teacher doubt analytics for a lecture (anonymized, teacher-only) */
+  getDoubtAnalytics: (lectureId: string) =>
+    request<LectureDoubtAnalytics>(
+      `/lectures/teacher/lectures/${lectureId}/chat/analytics`
     ),
 }
 

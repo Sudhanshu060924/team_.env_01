@@ -82,7 +82,7 @@ async def test_translate_returns_empty_for_invalid_language():
 
 @pytest.mark.asyncio
 async def test_translate_returns_empty_when_no_api_key(monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     from app.config import get_settings
     get_settings.cache_clear()
     state = _make_state()
@@ -97,15 +97,13 @@ async def test_translate_returns_empty_when_no_api_key(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_translate_english():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(
-        return_value=_make_groq_response("Binary search divides the search space into half.")
-    )
+    translated = "Binary search divides the search space into half."
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, return_value=translated), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="english")
@@ -122,15 +120,12 @@ async def test_translate_english():
 @pytest.mark.asyncio
 async def test_translate_hindi():
     hindi_text = "Binary search search space को आधे में divide करता है।"
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(
-        return_value=_make_groq_response(hindi_text)
-    )
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, return_value=hindi_text), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="hindi")
@@ -147,15 +142,12 @@ async def test_translate_hindi():
 @pytest.mark.asyncio
 async def test_translate_hinglish():
     hinglish_text = "Binary search mein hum search space ko half karte hain."
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(
-        return_value=_make_groq_response(hinglish_text)
-    )
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, return_value=hinglish_text), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         state = _make_state(target_language="hinglish")
@@ -170,11 +162,14 @@ async def test_translate_hinglish():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_translate_passes_context_to_groq():
+async def test_translate_passes_context_to_gemini():
     """Technical terms, recent transcripts, and topic are forwarded in the prompt."""
-    mock_client = MagicMock()
-    create_mock = AsyncMock(return_value=_make_groq_response("ok"))
-    mock_client.chat.completions.create = create_mock
+    captured: dict = {}
+
+    async def _fake(*, system_prompt, user_prompt, model, **kwargs):
+        captured["system_prompt"] = system_prompt
+        captured["user_prompt"]   = user_prompt
+        return "ok"
 
     state = _make_state(
         target_language="english",
@@ -183,29 +178,24 @@ async def test_translate_passes_context_to_groq():
         recent_transcripts=["Today we discuss binary search.", "It works by halving."],
     )
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate", side_effect=_fake), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         await translate(state)
 
-    call_kwargs = create_mock.call_args.kwargs
-    messages    = call_kwargs["messages"]
-    full_text   = " ".join(m["content"] for m in messages)
-
-    assert "Binary Search"   in full_text
-    assert "O(log n)"        in full_text
+    full_text = captured.get("system_prompt", "") + captured.get("user_prompt", "")
+    assert "Binary Search"    in full_text
+    assert "O(log n)"         in full_text
     assert "Today we discuss" in full_text
 
 
 @pytest.mark.asyncio
 async def test_translate_preserves_formula():
-    """O(log n) must appear verbatim in the user prompt."""
-    mock_client = MagicMock()
-    create_mock = AsyncMock(return_value=_make_groq_response("The time complexity is O(log n)."))
-    mock_client.chat.completions.create = create_mock
+    """O(log n) must appear verbatim in the response."""
+    translated_text = "The time complexity is O(log n)."
 
     state = _make_state(
         target_language="english",
@@ -213,10 +203,11 @@ async def test_translate_preserves_formula():
         technical_terms=["O(log n)"],
     )
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, return_value=translated_text), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         result = await translate(state)
@@ -229,14 +220,12 @@ async def test_translate_preserves_formula():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_translate_returns_empty_on_groq_error():
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("API down"))
-
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+async def test_translate_returns_empty_on_gemini_error():
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, side_effect=RuntimeError("API down")), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         result = await translate(_make_state())
@@ -431,13 +420,11 @@ async def test_translation_failure_does_not_affect_transcription():
     because _run_translation is a separate asyncio task from _handle_audio.
     This test verifies translate() never raises.
     """
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("network error"))
-
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock, side_effect=RuntimeError("network error")), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         # Must NOT raise

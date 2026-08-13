@@ -4,6 +4,7 @@ import { ImportantEvent } from "@/types/ai";
 
 interface ImportantEventsPanelProps {
   events: ImportantEvent[];
+  onSeek?: (seconds: number) => void;
 }
 
 function formatTime(seconds: number): string {
@@ -14,6 +15,7 @@ function formatTime(seconds: number): string {
 
 export default function ImportantEventsPanel({
   events,
+  onSeek,
 }: ImportantEventsPanelProps) {
   if (events.length === 0) {
     return (
@@ -27,9 +29,14 @@ export default function ImportantEventsPanel({
     <ul className="flex flex-col gap-4">
       {[...events].reverse().map((evt) => (
         <li key={evt.id} className="flex gap-3 items-start">
-          <span className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium">
+          <button
+            onClick={() => onSeek?.(evt.timestamp)}
+            className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium hover:text-yellow-600 hover:underline transition-colors cursor-pointer"
+            title={`Seek to ${formatTime(evt.timestamp)}`}
+            aria-label={`Seek video to ${formatTime(evt.timestamp)}`}
+          >
             {formatTime(evt.timestamp)}
-          </span>
+          </button>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-600 mb-0.5">
               {evt.isFormula ? "Formula" : "Important concept"}

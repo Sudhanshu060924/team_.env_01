@@ -41,7 +41,8 @@ export default function TeacherLecturesPage() {
         {!loading && lectures.length === 0 && (
           <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center">
             <p className="text-gray-600 font-medium mb-1">No lectures yet</p>
-            <Link href="/"><Button variant="primary">Start Lecture</Button></Link>
+            <p className="text-sm text-gray-400 mb-4">Upload your first lecture video to get started.</p>
+            <Link href="/teacher/upload"><Button variant="primary">Upload Video</Button></Link>
           </div>
         )}
         {!loading && lectures.length > 0 && (
@@ -53,7 +54,9 @@ export default function TeacherLecturesPage() {
                   <div className="flex gap-2 mt-1">
                     {lec.status === 'completed' && <Badge variant="completed">Completed</Badge>}
                     {lec.status === 'live' && <Badge variant="live">● Live</Badge>}
-                    {lec.status !== 'completed' && lec.status !== 'live' && <Badge>{lec.status}</Badge>}
+                    {lec.status === 'available' && <Badge variant="completed">Available ✓</Badge>}
+                    {lec.status !== 'completed' && lec.status !== 'live' && lec.status !== 'available' && <Badge>{lec.status}</Badge>}
+                    {lec.video_url && <span className="text-xs text-green-600 font-medium">Video ✓</span>}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2 shrink-0">

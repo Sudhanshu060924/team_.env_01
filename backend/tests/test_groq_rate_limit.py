@@ -94,7 +94,7 @@ def test_truncate_prefers_sentence_boundary():
 
 @pytest.mark.asyncio
 async def test_translation_prompt_respects_max_context_chars():
-    """The user_msg sent to Groq must not exceed MAX_TRANSLATION_CONTEXT_CHARS."""
+    """The user_msg sent to Gemini must not exceed MAX_TRANSLATION_CONTEXT_CHARS."""
     # Build a state with very large recent_transcripts and previous_translation.
     long_text = "Binary search is a great algorithm. " * 300  # ~10 800 chars
     state = _make_state(
@@ -102,26 +102,24 @@ async def test_translation_prompt_respects_max_context_chars():
         previous_translation=long_text,
     )
 
-    create_mock = AsyncMock(return_value=_mock_groq_response("ok"))
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = create_mock
+    # Capture the user_prompt passed to gemini_translate
+    captured: dict = {}
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
-         patch("app.graph.nodes.translation.get_settings") as ms, \
-         patch("app.integrations.groq_limiter.get_settings") as ms2:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+    async def _fake_gemini_translate(*, system_prompt, user_prompt, model, **kwargs):
+        captured["user_prompt"] = user_prompt
+        return "ok"
+
+    with patch("app.graph.nodes.translation.gemini_translate", side_effect=_fake_gemini_translate), \
+         patch("app.graph.nodes.translation.get_settings") as ms:
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
-        ms2.return_value.MAX_CONCURRENT_GROQ_REQUESTS = 1
-        ms2.return_value.GROQ_MAX_RETRIES = 2
-        reset_semaphore()
         await translate(state)
 
     # Verify the user message was capped.
-    call_kwargs = create_mock.call_args.kwargs
-    user_msg = next(m["content"] for m in call_kwargs["messages"] if m["role"] == "user")
-    assert len(user_msg) <= 4000
+    assert "user_prompt" in captured, "gemini_translate was not called"
+    assert len(captured["user_prompt"]) <= 4000
 
 
 # ---------------------------------------------------------------------------
@@ -410,21 +408,14 @@ async def test_translation_failure_does_not_stop_transcription():
     translate() must never raise — errors are swallowed.
     This means the speech_event path is unaffected.
     """
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("network down"))
-
-    reset_semaphore()
-
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
-         patch("app.graph.nodes.translation.get_settings") as ms, \
-         patch("app.integrations.groq_limiter.get_settings") as ms2:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+    with patch("app.graph.nodes.translation.gemini_translate",
+               new_callable=AsyncMock,
+               side_effect=RuntimeError("network down")), \
+         patch("app.graph.nodes.translation.get_settings") as ms:
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MAX_TRANSLATION_CONTEXT_CHARS = 4000
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
-        ms2.return_value.MAX_CONCURRENT_GROQ_REQUESTS = 1
-        ms2.return_value.GROQ_MAX_RETRIES = 0
-        reset_semaphore()
         # Must NOT raise.
         result = await translate(_make_state())
 
@@ -573,21 +564,20 @@ def test_is_trivial_real_content():
 
 @pytest.mark.asyncio
 async def test_translate_skips_trivial_transcript():
-    """translate() returns {} for filler-word-only text without calling Groq."""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock()
+    """translate() returns {} for filler-word-only text without calling Gemini."""
+    gemini_mock = AsyncMock()
 
     state = _make_state(last_transcript="um okay")
 
-    with patch("app.graph.nodes.translation.get_groq_client", return_value=mock_client), \
+    with patch("app.graph.nodes.translation.gemini_translate", gemini_mock), \
          patch("app.graph.nodes.translation.get_settings") as ms:
-        ms.return_value.GROQ_API_KEY = "fake"
-        ms.return_value.GROQ_MODEL   = "llama-3.1-8b-instant"
+        ms.return_value.GEMINI_API_KEY = "fake"
+        ms.return_value.GEMINI_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
         ms.return_value.MIN_TRANSCRIPT_CHARS = 5
         result = await translate(state)
 
     assert result == {}
-    mock_client.chat.completions.create.assert_not_called()
+    gemini_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

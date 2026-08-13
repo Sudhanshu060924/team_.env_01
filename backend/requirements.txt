@@ -23,6 +23,9 @@ alembic>=1.13
 #   Windows: winget install ffmpeg
 groq>=0.9
 
+# Gemini — translation (replaces Groq for translation only)
+google-genai>=1.0
+
 # Phase 6 — Vision / OCR
 # NOTE: Tesseract OCR binary must also be installed as a system dependency.
 #   macOS:   brew install tesseract

@@ -161,9 +161,13 @@ class ChatMessage(Base):
     sender_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    sender_role: Mapped[str] = mapped_column(String, nullable=False)  # "student" | "teacher"
+    sender_role: Mapped[str] = mapped_column(String, nullable=False)  # "student" | "teacher" | "ai"
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # Phase 9: AI chatbot fields — only set on AI reply messages
+    detected_topic: Mapped[str | None] = mapped_column(String, nullable=True)
+    ai_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     thread: Mapped["ChatThread"] = relationship(back_populates="messages")
     sender: Mapped["User"] = relationship(

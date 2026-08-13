@@ -398,7 +398,11 @@ async def _run_important_event_detection(
 async def _handle_language_change(lecture_id: str, data: dict, websocket: WebSocket) -> None:
     """
     Store the new target language for this lecture session.
-    Optionally retranslate the last transcript into the new language immediately.
+
+    Fetches all stored speech_event chunks from the DB and retranslates each
+    one into the new language, preserving original timestamps.  This ensures
+    the student sees a complete, timestamped translation panel immediately after
+    switching language — without regenerating a single bulk summary.
     """
     raw_lang = data.get("target_language", "").lower().strip()
 
@@ -409,25 +413,111 @@ async def _handle_language_change(lecture_id: str, data: dict, websocket: WebSoc
         })
         return
 
-    state = session_store.set_language(lecture_id, raw_lang)
+    session_store.set_language(lecture_id, raw_lang)
     logger.info("WS language_change lecture=%s → %s", lecture_id, raw_lang)
 
-    # If there is a recent transcript, retranslate it into the new language immediately
-    # so the student sees the panel refresh rather than waiting for the next chunk.
-    if state.last_transcript:
-        try:
-            result = await translate(state)
-            if result:
-                session_store.set_translation(lecture_id, result["translated"])
-                await manager.send_personal(websocket, {
-                    "type":      "translation",
-                    "lecture_id": lecture_id,
-                    "timestamp":  state.last_timestamp,
-                    "content":    result["translated"],
-                    "metadata":  {"language": result["language"], "source": "language_change"},
-                })
-        except Exception as exc:
-            logger.error("Retranslation on language change failed lecture=%s: %s", lecture_id, exc)
+    # Fetch all speech_event chunks from DB and retranslate each one
+    try:
+        from app.database.database import get_db
+        import app.services.event_service as event_svc
+        import uuid as _uuid
+        from app.schemas.events import LectureEvent as _LectureEvent
+
+        speech_events = []
+        async for db in get_db():
+            speech_events = await event_svc.get_events(db, lecture_id, event_type="speech_event")
+
+        if not speech_events:
+            # No stored chunks — fall back to retranslating just the last transcript in session
+            state = session_store.get_or_create(lecture_id)
+            if state.last_transcript:
+                result = await translate(state)
+                if result:
+                    session_store.set_translation(lecture_id, result["translated"])
+                    await manager.send_personal(websocket, {
+                        "type":       "translation",
+                        "lecture_id": lecture_id,
+                        "timestamp":  state.last_timestamp,
+                        "start":      state.last_timestamp,
+                        "end":        state.last_timestamp,
+                        "language":   result["language"],
+                        "content":    result["translated"],
+                        "metadata":   {"language": result["language"], "source": "language_change"},
+                    })
+            return
+
+        logger.info(
+            "WS language_change: retranslating %d chunks lecture=%s lang=%s",
+            len(speech_events), lecture_id, raw_lang,
+        )
+
+        for ev in speech_events:
+            chunk_text = ev.content.strip()
+            if not chunk_text:
+                continue
+
+            chunk_start = float(ev.metadata.get("start", ev.timestamp))
+            chunk_end   = float(ev.metadata.get("end",   ev.timestamp))
+
+            # Update session with this chunk so translate() has correct context
+            state = session_store.add_transcript(lecture_id, chunk_text, timestamp=chunk_start)
+
+            try:
+                result = await translate(state)
+            except Exception as exc:
+                logger.error(
+                    "language_change retranslation failed lecture=%s start=%.1f: %s",
+                    lecture_id, chunk_start, exc,
+                )
+                continue
+
+            if not result:
+                continue
+
+            translated   = result["translated"]
+            trans_lang   = result["language"]
+
+            session_store.set_translation(lecture_id, translated)
+
+            # Persist a fresh translation event
+            try:
+                translation_event = _LectureEvent(
+                    event_id=str(_uuid.uuid4()),
+                    lecture_id=lecture_id,
+                    timestamp=chunk_start,
+                    type="translation",
+                    source="language_change",
+                    content=translated,
+                    metadata={
+                        "start":    chunk_start,
+                        "end":      chunk_end,
+                        "language": trans_lang,
+                    },
+                )
+                async for db in get_db():
+                    await event_svc.save_event(db, translation_event)
+            except Exception as exc:
+                logger.warning("Failed to persist retranslation lecture=%s: %s", lecture_id, exc)
+
+            # Stream to the requesting student immediately
+            await manager.send_personal(websocket, {
+                "type":       "translation",
+                "lecture_id": lecture_id,
+                "timestamp":  chunk_start,
+                "start":      chunk_start,
+                "end":        chunk_end,
+                "language":   trans_lang,
+                "content":    translated,
+                "metadata":   {
+                    "start":    chunk_start,
+                    "end":      chunk_end,
+                    "language": trans_lang,
+                    "source":   "language_change",
+                },
+            })
+
+    except Exception as exc:
+        logger.error("language_change handler failed lecture=%s: %s", lecture_id, exc, exc_info=True)
 
 
 async def _handle_frame(lecture_id: str, data: dict) -> None:

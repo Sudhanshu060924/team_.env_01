@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 import logging
@@ -213,6 +214,60 @@ async def complete_lecture(lecture_id: str, db: AsyncSession = Depends(get_db)):
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
     return lecture
+
+
+@router.post("/{lecture_id}/process", status_code=202)
+async def process_lecture(
+    lecture_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Start (or reuse) the background processing pipeline for a pre-recorded lecture.
+
+    Idempotent:
+      - If processing is already running  → returns current status.
+      - If already completed AND events exist in DB → returns current status.
+      - Otherwise                         → starts the pipeline exactly once.
+
+    The pipeline downloads the Cloudinary video, transcribes it, translates,
+    detects topics/events, generates notes, and persists all results.
+    Progress and results are broadcast via WebSocket (/ws/lectures/{lecture_id}).
+    """
+    from app.services.processing_registry import processing_registry
+    from app.services.lecture_pipeline import run_lecture_pipeline
+
+    lecture = await lecture_svc.get_lecture(db, lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    if not lecture.video_url:
+        raise HTTPException(
+            status_code=422,
+            detail="Lecture has no video. Upload a video before processing.",
+        )
+
+    # Already running — reuse existing task
+    if processing_registry.is_active(lecture_id):
+        logger.info("Processing already active lecture_id=%s", lecture_id)
+        return {"status": "processing", "lecture_id": lecture_id}
+
+    # If completed AND pipeline has already produced events, nothing to do.
+    # We still run the pipeline when status is completed but events are missing
+    # (e.g. lecture was manually completed before the pipeline ran).
+    if lecture.status == "completed":
+        existing_events = await event_svc.get_events(db, lecture_id, event_type="speech_event")
+        if existing_events:
+            logger.info("Lecture already fully processed lecture_id=%s", lecture_id)
+            return {"status": "completed", "lecture_id": lecture_id}
+
+    # Start the pipeline as a background task
+    logger.info("Starting lecture processing lecture_id=%s", lecture_id)
+    task = asyncio.create_task(
+        run_lecture_pipeline(lecture_id, lecture.video_url)
+    )
+    processing_registry.register(lecture_id, task)
+
+    return {"status": "processing", "lecture_id": lecture_id}
 
 
 @router.get("/{lecture_id}/events", response_model=List[LectureEvent])

@@ -4,12 +4,11 @@ import { useState } from "react";
 import {
   TopicState,
   ImportantEvent,
-  ChatMessage,
   TranslationLine,
   TargetLanguage,
+  TranscriptChunk,
 } from "@/types/ai";
 import { ChatMessageRead } from "@/types/chat";
-import { TranscriptLine } from "./TranscriptPanel";
 import LectureVideo from "./LectureVideo";
 import TranscriptPanel from "./TranscriptPanel";
 import TranslationPanel from "./TranslationPanel";
@@ -19,38 +18,47 @@ import NotesPanel from "./NotesPanel";
 import LectureChat from "./LectureChat";
 import DoubtsPanel from "./DoubtsPanel";
 
-type Tab = "topics" | "events" | "notes" | "chat" | "doubts";
+type Tab = "transcript" | "topics" | "events" | "notes" | "chat" | "doubts";
 
-const TABS: { id: Tab; label: string; icon?: string }[] = [
-  { id: "topics",  label: "Topics",           icon: "☰" },
-  { id: "events",  label: "Important Events",  icon: "⚡" },
-  { id: "notes",   label: "Notes",             icon: "📋" },
-  { id: "chat",    label: "Chat",              icon: "💬" },
-  { id: "doubts",  label: "Doubts",            icon: "❓" },
+const TABS: { id: Tab; label: string }[] = [
+  { id: "transcript", label: "Transcript" },
+  { id: "topics",     label: "Topics" },
+  { id: "events",     label: "Important Events" },
+  { id: "notes",      label: "Notes" },
+  { id: "chat",       label: "Chat" },
+  { id: "doubts",     label: "Doubts" },
 ];
 
 interface LectureLayoutProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   videoSrc: string | null;
   onVideoEnded: () => void;
-  transcriptLines: TranscriptLine[];
+  onSeek?: (seconds: number) => void;
+  // Transcript
+  transcriptChunks: TranscriptChunk[];
+  // Translation
   translationLines: TranslationLine[];
   selectedLanguage: TargetLanguage;
   onLanguageChange: (lang: TargetLanguage) => void;
-  topic: TopicState | null;
+  // Topics
+  topics: TopicState[];
   importantEvents: ImportantEvent[];
   notes: string | null;
   isGeneratingNotes: boolean;
-  isRegeneratingNotes?: boolean;
   notesError?: string | null;
   notesLanguage: TargetLanguage;
   onNotesLanguageChange: (lang: TargetLanguage) => void;
-  chatMessages: ChatMessage[];
+  // Chat tab (student ↔ AI chatbot)
+  aiChatMessages: ChatMessageRead[];
   onChatSend: (q: string) => void;
+  isAiChatSending?: boolean;
+  aiChatError?: string | null;
   isLive: boolean;
   isCompleted: boolean;
   lectureTitle: string;
-  // Doubts (student ↔ teacher)
+  /** True when the processing pipeline found no speech in the video */
+  noSpeechDetected?: boolean;
+  // Doubts tab (student ↔ teacher)
   doubtMessages?: ChatMessageRead[];
   onDoubtSend?: (content: string) => void;
   isDoubtSending?: boolean;
@@ -62,30 +70,33 @@ export default function LectureLayout({
   videoRef,
   videoSrc,
   onVideoEnded,
-  transcriptLines,
+  onSeek,
+  transcriptChunks,
   translationLines,
   selectedLanguage,
   onLanguageChange,
-  topic,
+  topics,
   importantEvents,
   notes,
   isGeneratingNotes,
-  isRegeneratingNotes = false,
   notesError = null,
   notesLanguage,
   onNotesLanguageChange,
-  chatMessages,
+  aiChatMessages,
   onChatSend,
+  isAiChatSending = false,
+  aiChatError = null,
   isLive,
   isCompleted,
   lectureTitle,
+  noSpeechDetected = false,
   doubtMessages = [],
   onDoubtSend,
   isDoubtSending = false,
   doubtSendError = null,
   showDoubts = false,
 }: LectureLayoutProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("topics");
+  const [activeTab, setActiveTab] = useState<Tab>("transcript");
 
   const visibleTabs = TABS.filter((tab) => tab.id !== "doubts" || showDoubts);
 
@@ -96,7 +107,7 @@ export default function LectureLayout({
      * Each inner panel handles its own scrolling independently.
      */
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* ── Top section: Video (left) + Transcript/Translation (right) ── */}
+      {/* ── Top section: Video (left) + Translation (right) ── */}
       <div className="flex flex-col lg:grid lg:grid-cols-[3fr_2fr] min-h-0 flex-1 overflow-hidden border-b border-gray-200">
         {/* Left — Video: fills available height, never expands page */}
         <div className="bg-black lg:overflow-hidden flex items-center justify-center border-b border-gray-200 lg:border-b-0 lg:border-r lg:border-gray-200"
@@ -109,30 +120,19 @@ export default function LectureLayout({
           />
         </div>
 
-        {/* Right — Transcript (top half) + Translation (bottom half) */}
-        <div className="flex flex-col min-h-0 overflow-hidden divide-y divide-gray-200">
-          {/* Transcript — scrolls internally; NEVER expands page */}
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <TranscriptPanel lines={transcriptLines} />
-          </div>
-          {/* Translation — scrolls internally; NEVER expands page */}
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <TranslationPanel
-              lines={translationLines}
-              selectedLanguage={selectedLanguage}
-              onLanguageChange={onLanguageChange}
-              disabled={!isLive}
-            />
-          </div>
+        {/* Right — Translation (full height) */}
+        <div className="flex flex-col min-h-0 overflow-hidden">
+          <TranslationPanel
+            lines={translationLines}
+            selectedLanguage={selectedLanguage}
+            onLanguageChange={onLanguageChange}
+            onSeek={onSeek}
+            noSpeechDetected={noSpeechDetected}
+          />
         </div>
       </div>
 
       {/* ── Bottom section: tabbed panel ────────────────────────────── */}
-      {/*
-       * flex-shrink-0 with explicit height — does NOT grow to push content.
-       * 300px on desktop, taller on mobile where transcript/translation
-       * are stacked above and the overall container scrolls.
-       */}
       <div className="flex flex-col shrink-0 bg-white" style={{ height: '300px' }}>
         {/* Tab bar */}
         <div
@@ -162,14 +162,27 @@ export default function LectureLayout({
 
         {/* Tab panels — each manages its own internal scroll */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
+          {activeTab === "transcript" && (
+            <div id="tabpanel-transcript" role="tabpanel" aria-labelledby="tab-transcript" className="h-full">
+              <TranscriptPanel
+                chunks={transcriptChunks}
+                onSeek={onSeek}
+                noSpeechDetected={noSpeechDetected}
+              />
+            </div>
+          )}
           {activeTab === "topics" && (
             <div id="tabpanel-topics" role="tabpanel" aria-labelledby="tab-topics">
-              <TopicPanel topic={topic} />
+              <TopicPanel
+                topics={topics}
+                onSeek={onSeek}
+                noSpeechDetected={noSpeechDetected}
+              />
             </div>
           )}
           {activeTab === "events" && (
             <div id="tabpanel-events" role="tabpanel" aria-labelledby="tab-events">
-              <ImportantEventsPanel events={importantEvents} />
+              <ImportantEventsPanel events={importantEvents} onSeek={onSeek} />
             </div>
           )}
           {activeTab === "notes" && (
@@ -182,12 +195,12 @@ export default function LectureLayout({
               <NotesPanel
                 notes={notes}
                 isGenerating={isGeneratingNotes}
-                isRegenerating={isRegeneratingNotes}
                 notesError={notesError}
                 lectureCompleted={isCompleted}
                 notesLanguage={notesLanguage}
                 onNotesLanguageChange={onNotesLanguageChange}
                 lectureTitle={lectureTitle}
+                noSpeechDetected={noSpeechDetected}
               />
             </div>
           )}
@@ -199,8 +212,10 @@ export default function LectureLayout({
               className="h-full flex flex-col min-h-0"
             >
               <LectureChat
-                messages={chatMessages}
+                messages={aiChatMessages}
                 onSend={onChatSend}
+                isSending={isAiChatSending}
+                sendError={aiChatError}
                 disabled={!isLive && !isCompleted}
               />
             </div>

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class LectureCreate(BaseModel):
     title: str
-    video_name: str
+    video_name: str = ""
 
 
 class LectureRead(BaseModel):
@@ -15,6 +15,7 @@ class LectureRead(BaseModel):
     video_name: str
     status: str
     teacher_id: Optional[str] = None
+    teacher_name: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
     video_url: Optional[str] = None

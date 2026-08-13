@@ -7,13 +7,13 @@ import { useAudioCapture } from "@/hooks/useAudioCapture";
 import { useFrameCapture } from "@/hooks/useFrameCapture";
 import LectureHeader from "@/components/lecture/LectureHeader";
 import LectureLayout from "@/components/lecture/LectureLayout";
-import { TranscriptLine } from "@/components/lecture/TranscriptPanel";
 import {
   WSMessage,
   TopicState,
   ImportantEvent,
   ChatMessage,
   TranslationLine,
+  TranscriptChunk,
   TargetLanguage,
 } from "@/types/ai";
 import UniversityWatermark from "@/components/layout/UniversityWatermark";
@@ -35,10 +35,10 @@ export default function HomePage() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
-  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
+  const [transcriptChunks, setTranscriptChunks] = useState<TranscriptChunk[]>([]);
   const [translationLines, setTranslationLines] = useState<TranslationLine[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<TargetLanguage>("english");
-  const [topic, setTopic] = useState<TopicState | null>(null);
+  const [topics, setTopics] = useState<TopicState[]>([]);
   const [importantEvents, setImportantEvents] = useState<ImportantEvent[]>([]);
   const [notes, setNotes] = useState<string | null>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
@@ -65,13 +65,17 @@ export default function HomePage() {
   const handleWsMessage = useCallback(
     (msg: WSMessage) => {
       switch (msg.type) {
+        case "transcript":
         case "speech_event":
           if (msg.content) {
-            setTranscriptLines((prev) => [
+            const ts = msg.timestamp ?? 0;
+            setTranscriptChunks((prev) => [
               ...prev,
               {
-                timestamp: msg.timestamp ?? 0,
-                text: msg.content!,
+                timestamp: ts,
+                start: ts,
+                end: ts,
+                content: msg.content!,
                 language: (msg.metadata as Record<string, string>)?.language ?? "en",
               },
             ]);
@@ -79,10 +83,13 @@ export default function HomePage() {
           break;
         case "translation":
           if (msg.content) {
+            const ts = msg.timestamp ?? 0;
             setTranslationLines((prev) => [
               ...prev,
               {
-                timestamp: msg.timestamp ?? 0,
+                timestamp: ts,
+                start: ts,
+                end: ts,
                 content: msg.content!,
                 language: ((msg.metadata as Record<string, string>)?.language ?? "english") as TargetLanguage,
                 source: (msg.metadata as Record<string, string>)?.source,
@@ -92,11 +99,14 @@ export default function HomePage() {
           break;
         case "topic_update":
           if (msg.content) {
-            setTopic({
-              topic: msg.content,
-              subtopic: (msg.metadata as Record<string, string>)?.subtopic ?? "",
-              timestamp: msg.timestamp ?? 0,
-            });
+            setTopics((prev) => [
+              ...prev,
+              {
+                topic: msg.content!,
+                subtopic: (msg.metadata as Record<string, string>)?.subtopic ?? "",
+                timestamp: msg.timestamp ?? 0,
+              },
+            ]);
           }
           break;
         case "important_event":
@@ -369,15 +379,14 @@ export default function HomePage() {
             videoRef={videoRef}
             videoSrc={videoSrc}
             onVideoEnded={handleVideoEnded}
-            transcriptLines={transcriptLines}
+            transcriptChunks={transcriptChunks}
             translationLines={translationLines}
             selectedLanguage={selectedLanguage}
             onLanguageChange={handleLanguageChange}
-            topic={topic}
+            topics={topics}
             importantEvents={importantEvents}
             notes={notes}
             isGeneratingNotes={isGeneratingNotes}
-            isRegeneratingNotes={isRegeneratingNotes}
             notesError={notesError}
             notesLanguage={notesLanguage}
             onNotesLanguageChange={handleNotesLanguageChange}

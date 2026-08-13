@@ -46,7 +46,7 @@ async def run_notes_graph(lecture_id: str, target_language: str = "") -> None:
             events = await event_svc.get_events(db, lecture_id)
 
         speech_and_board = [
-            ev for ev in events if ev.type in ("speech", "board", "ocr")
+            ev for ev in events if ev.type in ("speech", "speech_event", "board", "ocr")
         ]
 
         if not speech_and_board:

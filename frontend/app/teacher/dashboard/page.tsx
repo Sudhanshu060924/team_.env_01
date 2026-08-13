@@ -106,12 +106,12 @@ export default function TeacherDashboard() {
         {/* My Lectures */}
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-xl font-bold text-black">My Lectures</h2>
-          <Link href="/">
+          <Link href="/teacher/upload">
             <Button variant="primary" size="sm">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              Start Live Lecture
+              Upload Video
             </Button>
           </Link>
         </div>
@@ -126,9 +126,9 @@ export default function TeacherDashboard() {
         {!lecturesLoading && lectures.length === 0 && (
           <div className="border border-dashed border-gray-300 rounded-lg p-12 text-center">
             <p className="text-gray-600 font-medium mb-1">No lectures yet</p>
-            <p className="text-sm text-gray-400 mb-4">Start your first live lecture from the home page.</p>
-            <Link href="/">
-              <Button variant="primary">Start Lecture</Button>
+            <p className="text-sm text-gray-400 mb-4">Upload your first lecture video to get started.</p>
+            <Link href="/teacher/upload">
+              <Button variant="primary">Upload Video</Button>
             </Link>
           </div>
         )}
@@ -140,14 +140,21 @@ export default function TeacherDashboard() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="font-semibold text-black text-sm">{lec.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{lec.video_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{lec.video_name || '—'}</p>
                     <div className="flex items-center gap-2 mt-2">
                       {lec.status === 'completed' && <Badge variant="completed">Completed</Badge>}
                       {lec.status === 'live' && <Badge variant="live">● Live</Badge>}
-                      {lec.status !== 'completed' && lec.status !== 'live' && (
+                      {lec.status === 'available' && <Badge variant="completed">Available ✓</Badge>}
+                      {lec.status !== 'completed' && lec.status !== 'live' && lec.status !== 'available' && (
                         <Badge variant="default">{lec.status}</Badge>
                       )}
+                      {lec.video_url && (
+                        <span className="text-xs text-green-600 font-medium">Video ✓</span>
+                      )}
                     </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {lec.created_at ? new Date(lec.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
+                    </p>
                   </div>
                   <div className="flex flex-col items-end gap-2 shrink-0">
                     <VideoUploadButton

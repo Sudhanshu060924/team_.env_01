@@ -73,6 +73,15 @@ function StatusBadge({ status }: { status: string }) {
         Completed
       </Badge>
     )
+  if (status === 'available')
+    return (
+      <Badge variant="completed">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+        Available
+      </Badge>
+    )
   if (status === 'live')
     return <Badge variant="live">● Live</Badge>
   return <Badge variant="notStarted">◷ Not Started</Badge>
@@ -81,9 +90,15 @@ function StatusBadge({ status }: { status: string }) {
 export default function LectureCard({ lecture, basePath }: LectureCardProps) {
   const router = useRouter()
   const isCompleted = lecture.status === 'completed'
+  const isAvailable = lecture.status === 'available'
   const progress = isCompleted ? 100 : 0
 
-  const ctaLabel = isCompleted ? 'Open Lecture' : lecture.status === 'live' ? 'Join Live' : 'Start Lecture'
+  const ctaLabel =
+    isCompleted || isAvailable
+      ? 'Open Lecture'
+      : lecture.status === 'live'
+      ? 'Join Live'
+      : 'Start Lecture'
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors flex gap-0 overflow-hidden">
@@ -107,6 +122,14 @@ export default function LectureCard({ lecture, basePath }: LectureCardProps) {
 
         {/* Meta row */}
         <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+          {lecture.teacher_name && (
+            <span className="flex items-center gap-1">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              {lecture.teacher_name}
+            </span>
+          )}
           <span className="flex items-center gap-1">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />

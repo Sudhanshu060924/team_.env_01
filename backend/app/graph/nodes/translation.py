@@ -1,14 +1,12 @@
 """
-Translation Agent — Phase 7
+Translation Agent — Phase 7 (Gemini)
 
 Translates a Whisper transcript into the student's chosen language
-(English / Hindi / Hinglish) using the Groq LLM with bounded context.
+(English / Hindi / Hinglish) using the Gemini LLM with bounded context.
 
-Changes for rate-limit management
-----------------------------------
-- Bounded context: prompt is capped at MAX_TRANSLATION_CONTEXT_CHARS.
-- Short-transcript guard: skips Groq for trivially small input.
-- Retry on 429: delegated to groq_chat_with_retry().
+Provider change: Groq → Gemini (google-genai SDK).
+The public interface is unchanged — all callers (websocket.py) continue to
+work without modification.
 
 Public interface
 ---------------
@@ -27,8 +25,7 @@ import logging
 from typing import Literal
 
 from app.graph.state import LectureSessionState, VALID_LANGUAGES
-from app.integrations.groq_service import get_groq_client
-from app.integrations.groq_limiter import groq_chat_with_retry
+from app.integrations.gemini_service import gemini_translate
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -125,7 +122,7 @@ def _truncate_to_chars(text: str, max_chars: int) -> str:
 
 async def translate(state: LectureSessionState) -> dict:
     """
-    Call the Groq LLM to translate state.last_transcript.
+    Call the Gemini LLM to translate state.last_transcript.
 
     Returns {"translated": str, "language": str} or {} on failure.
     Never raises — errors are logged and swallowed so transcription is unaffected.
@@ -140,8 +137,8 @@ async def translate(state: LectureSessionState) -> dict:
         return {}
 
     settings = get_settings()
-    if not settings.GROQ_API_KEY:
-        logger.warning("translation_agent: GROQ_API_KEY not set — skipping translation")
+    if not settings.GEMINI_API_KEY:
+        logger.warning("translation_agent: GEMINI_API_KEY not set — skipping translation")
         return {}
 
     # Hard length guard: reject transcripts below minimum threshold.
@@ -180,32 +177,35 @@ async def translate(state: LectureSessionState) -> dict:
     user_msg = _truncate_to_chars(user_msg, max_ctx)
 
     logger.info(
-        "translation_agent: Groq translation requested lecture=%s lang=%s chars=%d",
+        "translation_agent: translation requested lecture=%s lang=%s chars=%d",
         state.lecture_id, lang, len(transcript),
     )
 
     try:
-        client = get_groq_client()
-        response = await groq_chat_with_retry(
-            client,
-            model=settings.GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user",   "content": user_msg},
-            ],
-            temperature=0.2,
-            max_tokens=512,
+        logger.info(
+            "translation_agent: Gemini translation started lecture=%s model=%s",
+            state.lecture_id, settings.GEMINI_TRANSLATION_MODEL,
         )
-        translated = response.choices[0].message.content.strip()
+        translated = await gemini_translate(
+            system_prompt=system_msg,
+            user_prompt=user_msg,
+            model=settings.GEMINI_TRANSLATION_MODEL,
+            temperature=0.2,
+            max_output_tokens=512,
+        )
+        translated = translated.strip()
         if not translated:
             return {}
 
-        logger.debug(
-            "translation_agent: translated %d chars → %d chars (lang=%s)",
-            len(transcript), len(translated), lang,
+        logger.info(
+            "translation_agent: Gemini translation completed lecture=%s lang=%s chars_in=%d chars_out=%d",
+            state.lecture_id, lang, len(transcript), len(translated),
         )
         return {"translated": translated, "language": lang}
 
-    except Exception as exc:
-        logger.error("translation_agent: translation failed: %s", exc, exc_info=True)
+    except Exception:
+        logger.exception(
+            "translation_agent: Gemini translation failed lecture=%s lang=%s",
+            state.lecture_id, lang,
+        )
         return {}

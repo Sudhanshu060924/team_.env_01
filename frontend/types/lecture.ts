@@ -2,7 +2,9 @@ export interface Lecture {
   lecture_id: string
   title: string
   video_name: string
-  status: 'live' | 'completed' | string
+  status: 'live' | 'available' | 'completed' | string
+  teacher_id?: string | null
+  teacher_name?: string | null
   created_at?: string
   completed_at?: string | null
   video_url?: string | null
@@ -11,7 +13,7 @@ export interface Lecture {
 
 export interface LectureCreate {
   title: string
-  video_name: string
+  video_name?: string
 }
 
 export interface LectureEvent {

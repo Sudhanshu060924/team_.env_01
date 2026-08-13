@@ -1,6 +1,6 @@
-"""Pydantic schemas for the Student ↔ Teacher live doubt/chat feature."""
+"""Pydantic schemas for the Student ↔ Teacher live doubt/chat feature + Phase 9 AI chatbot."""
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -26,9 +26,12 @@ class ChatMessageRead(BaseModel):
     id: str
     thread_id: str
     sender_id: str
-    sender_role: str  # "student" | "teacher"
+    sender_role: str  # "student" | "teacher" | "ai"
     content: str
     created_at: datetime
+    # Phase 9 — only present on AI reply messages
+    detected_topic: Optional[str] = None
+    ai_answer: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -60,3 +63,33 @@ class TeacherThreadRead(BaseModel):
     messages: List[ChatMessageRead]
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — AI chatbot response
+# ---------------------------------------------------------------------------
+
+class AIChatResponse(BaseModel):
+    """Returned when a student submits a chatbot question."""
+    student_message: ChatMessageRead
+    ai_message: ChatMessageRead
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Teacher analytics
+# ---------------------------------------------------------------------------
+
+class TopicAnalytic(BaseModel):
+    topic: str
+    students_count: int
+    percentage: float
+    question_count: int
+
+
+class LectureDoubtAnalytics(BaseModel):
+    lecture_id: str
+    total_students: int          # students who have access (student-visible lectures count)
+    students_with_doubts: int
+    total_questions: int
+    most_asked_topic: Optional[str] = None
+    topics: List[TopicAnalytic]

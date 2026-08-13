@@ -97,7 +97,7 @@ def _build_user_prompt(events: List[LectureEvent]) -> str:
     board_lines:  list[str] = []
 
     for ev in events:
-        if ev.type == "speech" and ev.content.strip():
+        if ev.type in ("speech", "speech_event") and ev.content.strip():
             speech_lines.append(f"[{ev.timestamp:.1f}s] {ev.content.strip()}")
         elif ev.type in ("board", "ocr") and ev.content.strip():
             label = "FORMULA" if ev.metadata.get("is_formula") else "BOARD"

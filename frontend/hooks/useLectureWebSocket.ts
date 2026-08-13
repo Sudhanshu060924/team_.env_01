@@ -1,96 +1,250 @@
-'use client'
+"use client";
 
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { WSMessage } from '@/types/ai'
+import { useEffect, useRef, useState, useCallback } from "react";
+import { WSMessage } from "@/types/ai";
 
-export type WSStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+export type WSStatus = "disconnected" | "connecting" | "connected" | "error";
 
 interface UseLectureWebSocketOptions {
-  lectureId: string | null
-  onMessage: (msg: WSMessage) => void
+  lectureId: string | null;
+  onMessage: (msg: WSMessage) => void;
 }
 
-export function useLectureWebSocket({ lectureId, onMessage }: UseLectureWebSocketOptions) {
-  const [status, setStatus] = useState<WSStatus>('disconnected')
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mountedRef = useRef(true)
-  const onMessageRef = useRef(onMessage)
-  onMessageRef.current = onMessage
+export function useLectureWebSocket({
+  lectureId,
+  onMessage,
+}: UseLectureWebSocketOptions) {
+  const [status, setStatus] = useState<WSStatus>("disconnected");
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const mountedRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onMessageRef = useRef(onMessage);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  const clearTimers = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    if (connectTimerRef.current !== null) {
+      clearTimeout(connectTimerRef.current);
+      connectTimerRef.current = null;
+    }
+  }, []);
+
+  const closeSocket = useCallback(() => {
+    const ws = wsRef.current;
+
+    if (!ws) {
+      return;
+    }
+
+    // Remove handlers first so intentional cleanup
+    // cannot trigger reconnect.
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+
+    if (
+      ws.readyState === WebSocket.CONNECTING ||
+      ws.readyState === WebSocket.OPEN
+    ) {
+      ws.close();
+    }
+
+    wsRef.current = null;
+  }, []);
 
   const disconnect = useCallback(() => {
-    if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-    if (wsRef.current) {
-      wsRef.current.onclose = null // prevent reconnect loop
-      wsRef.current.close()
-      wsRef.current = null
+    clearTimers();
+    closeSocket();
+
+    if (mountedRef.current) {
+      setStatus("disconnected");
     }
-    if (mountedRef.current) setStatus('disconnected')
-  }, [])
+  }, [clearTimers, closeSocket]);
 
   const connect = useCallback(() => {
-    if (!lectureId) return
-    disconnect()
+    if (!lectureId || !mountedRef.current) {
+      return;
+    }
 
-    const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
-    const url = `${wsBase}/ws/lectures/${lectureId}`
-    setStatus('connecting')
+    clearTimers();
 
-    const ws = new WebSocket(url)
-    wsRef.current = ws
+    // Never create a second socket.
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.CONNECTING ||
+        wsRef.current.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
+
+    const wsBase = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+
+    const url = `${wsBase}/ws/lectures/${lectureId}`;
+
+    console.log("[LectureWS] connecting:", url);
+
+    setStatus("connecting");
+
+    const ws = new WebSocket(url);
+
+    wsRef.current = ws;
 
     ws.onopen = () => {
-      if (mountedRef.current) setStatus('connected')
-    }
+      if (!mountedRef.current || wsRef.current !== ws) {
+        return;
+      }
+
+      console.log("[LectureWS] connected:", lectureId);
+
+      setStatus("connected");
+    };
 
     ws.onmessage = (event) => {
-      try {
-        const msg: WSMessage = JSON.parse(event.data)
-        onMessageRef.current(msg)
-      } catch {
-        // ignore malformed messages
+      if (!mountedRef.current || wsRef.current !== ws) {
+        return;
       }
-    }
 
-    ws.onerror = () => {
-      if (mountedRef.current) setStatus('error')
-    }
+      try {
+        const message: WSMessage = JSON.parse(event.data);
 
-    ws.onclose = () => {
-      if (!mountedRef.current) return
-      setStatus('disconnected')
-      // Auto-reconnect after 3 s
-      reconnectTimer.current = setTimeout(() => {
-        if (mountedRef.current && lectureId) connect()
-      }, 3000)
-    }
-  }, [lectureId, disconnect])
+        console.log("[LectureWS] received:", message);
 
-  // Connect when lectureId becomes available
+        onMessageRef.current(message);
+      } catch (error) {
+        console.error("[LectureWS] invalid message:", event.data, error);
+      }
+    };
+
+    ws.onerror = (event) => {
+      if (!mountedRef.current || wsRef.current !== ws) {
+        return;
+      }
+
+      console.error("[LectureWS] error:", event);
+
+      setStatus("error");
+    };
+
+    ws.onclose = (event) => {
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+
+      console.log(
+        "[LectureWS] closed",
+        "code:",
+        event.code,
+        "reason:",
+        event.reason,
+      );
+
+      if (!mountedRef.current) {
+        return;
+      }
+
+      setStatus("disconnected");
+
+      // Reconnect after 3 seconds.
+      reconnectTimerRef.current = setTimeout(() => {
+        if (mountedRef.current && lectureId && wsRef.current === null) {
+          connect();
+        }
+      }, 3000);
+    };
+  }, [lectureId, clearTimers]);
+
+  /*
+   * IMPORTANT:
+   *
+   * Delay the first connection slightly.
+   *
+   * In Next.js development mode React Strict Mode can do:
+   *
+   * mount
+   * -> effect
+   * -> cleanup
+   * -> mount again
+   *
+   * Without this delay, the first WebSocket can be created
+   * and immediately closed, producing:
+   *
+   * "WebSocket is closed before the connection is established"
+   */
   useEffect(() => {
-    if (lectureId) {
-      connect()
-    } else {
-      disconnect()
+    mountedRef.current = true;
+
+    clearTimers();
+    closeSocket();
+
+    if (!lectureId) {
+      setStatus("disconnected");
+
+      return () => {
+        mountedRef.current = false;
+        clearTimers();
+        closeSocket();
+      };
     }
+
+    connectTimerRef.current = setTimeout(() => {
+      if (mountedRef.current && lectureId) {
+        connect();
+      }
+    }, 100);
+
     return () => {
-      mountedRef.current = false
-      disconnect()
-    }
-  }, [lectureId]) // eslint-disable-line react-hooks/exhaustive-deps
+      mountedRef.current = false;
 
-  const sendMessage = useCallback((msg: object) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg))
-    }
-  }, [])
+      clearTimers();
+      closeSocket();
+    };
+  }, [lectureId, connect, clearTimers, closeSocket]);
 
-  // Keepalive ping every 20 s
+  const sendMessage = useCallback((message: object) => {
+    const ws = wsRef.current;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("[LectureWS] Cannot send — WebSocket is not open");
+      return;
+    }
+
+    console.log("[LectureWS] sending:", message);
+
+    ws.send(JSON.stringify(message));
+  }, []);
+
+  // Keepalive
   useEffect(() => {
-    if (status !== 'connected') return
-    const id = setInterval(() => sendMessage({ type: 'ping' }), 20_000)
-    return () => clearInterval(id)
-  }, [status, sendMessage])
+    if (status !== "connected") {
+      return;
+    }
 
-  return { status, sendMessage, disconnect, connect }
+    const interval = setInterval(() => {
+      sendMessage({
+        type: "ping",
+      });
+    }, 20_000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [status, sendMessage]);
+
+  return {
+    status,
+    sendMessage,
+    disconnect,
+    connect,
+  };
 }

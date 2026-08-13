@@ -314,6 +314,8 @@ interface NotesPanelProps {
   isRegenerating?: boolean;
   /** Error string from notes generation failure */
   notesError?: string | null;
+  /** True when the pipeline found no speech in the video — notes cannot be generated */
+  noSpeechDetected?: boolean;
 }
 
 export default function NotesPanel({
@@ -325,6 +327,7 @@ export default function NotesPanel({
   lectureTitle = "Lecture Notes",
   isRegenerating = false,
   notesError = null,
+  noSpeechDetected = false,
 }: NotesPanelProps) {
   const handleDownloadPdf = useCallback(async () => {
     if (!notes) return;
@@ -415,15 +418,22 @@ export default function NotesPanel({
           </article>
         )}
 
+        {/* No speech — notes cannot be generated */}
+        {!isLoading && !notesError && !notes && noSpeechDetected && (
+          <p className="text-sm text-gray-500 italic py-2">
+            No speech was detected in this video — notes could not be generated.
+          </p>
+        )}
+
         {/* Empty — lecture in progress */}
-        {!isLoading && !notesError && !notes && !lectureCompleted && (
+        {!isLoading && !notesError && !notes && !lectureCompleted && !noSpeechDetected && (
           <p className="text-sm text-gray-500 italic py-2">
             Notes will be available after the lecture.
           </p>
         )}
 
         {/* Empty — lecture done but notes pending */}
-        {!isLoading && !notesError && !notes && lectureCompleted && (
+        {!isLoading && !notesError && !notes && lectureCompleted && !noSpeechDetected && (
           <p className="text-sm text-gray-500 italic py-2">
             Notes are being prepared…
           </p>

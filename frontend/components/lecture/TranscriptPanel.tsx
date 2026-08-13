@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { TranscriptChunk } from "@/types/ai";
 
-export interface TranscriptLine {
-  timestamp: number;
-  text: string;
-  language: string;
-}
+export type { TranscriptChunk };
 
 interface TranscriptPanelProps {
-  lines: TranscriptLine[];
+  chunks: TranscriptChunk[];
+  onSeek?: (seconds: number) => void;
+  noSpeechDetected?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -24,26 +23,28 @@ function isNearBottom(element: HTMLElement | null, threshold = 100): boolean {
   return scrollHeight - scrollTop - clientHeight < threshold;
 }
 
-export default function TranscriptPanel({ lines }: TranscriptPanelProps) {
+export default function TranscriptPanel({
+  chunks,
+  onSeek,
+  noSpeechDetected = false,
+}: TranscriptPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasNewContent, setHasNewContent] = useState(false);
-  const lastLengthRef = useRef(lines.length);
+  const lastLengthRef = useRef(chunks.length);
 
   // Auto-scroll only if user is already near bottom
   useEffect(() => {
-    if (lines.length > lastLengthRef.current) {
+    if (chunks.length > lastLengthRef.current) {
       const container = containerRef.current;
       if (container && isNearBottom(container)) {
-        // User is near bottom, auto-scroll
         container.scrollTop = container.scrollHeight;
         setHasNewContent(false);
-      } else if (container && lines.length > lastLengthRef.current) {
-        // User has scrolled up, show indicator
+      } else if (container) {
         setHasNewContent(true);
       }
     }
-    lastLengthRef.current = lines.length;
-  }, [lines.length]);
+    lastLengthRef.current = chunks.length;
+  }, [chunks.length]);
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-white">
@@ -56,25 +57,32 @@ export default function TranscriptPanel({ lines }: TranscriptPanelProps) {
 
       {/* Content */}
       <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4">
-        {lines.length === 0 ? (
+        {chunks.length === 0 ? (
           <p className="text-sm text-gray-500 italic">
-            Waiting for transcript…
+            {noSpeechDetected
+              ? "No speech detected in this video."
+              : "Waiting for transcript…"}
           </p>
         ) : (
           <div className="flex flex-col gap-4">
-            {lines.map((line, i) => {
-              const isLatest = i === lines.length - 1;
+            {chunks.map((chunk, i) => {
+              const isLatest = i === chunks.length - 1;
               return (
                 <div key={i} className="flex gap-3 items-start">
-                  <span className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium">
-                    {formatTime(line.timestamp)}
-                  </span>
+                  <button
+                    onClick={() => onSeek?.(chunk.start)}
+                    className="text-xs text-yellow-500 tabular-nums shrink-0 mt-0.5 font-mono font-medium hover:text-yellow-600 hover:underline transition-colors cursor-pointer"
+                    title={`Seek to ${formatTime(chunk.start)}`}
+                    aria-label={`Seek video to ${formatTime(chunk.start)}`}
+                  >
+                    {formatTime(chunk.start)}
+                  </button>
                   <p
                     className={`text-sm leading-relaxed ${
                       isLatest ? "text-black font-medium" : "text-gray-700"
                     }`}
                   >
-                    {line.text}
+                    {chunk.content}
                   </p>
                 </div>
               );
