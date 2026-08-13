@@ -111,6 +111,12 @@ export default function StudentLecturePage() {
   // to the current function even though the WS effect only runs once.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleWsMessageRef = useRef<(msg: Record<string, unknown>) => void>(() => {})
+  // Ref to hold the lecture's video_url so the WS "connected" handler can
+  // trigger processing AFTER the socket is open (avoids race condition where
+  // pipeline broadcasts arrive before the WS handshake completes).
+  const lectureVideoUrlRef = useRef<string | null>(null)
+  // Ensure processLecture is called at most once per page load.
+  const processTriggeredRef = useRef(false)
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -195,13 +201,21 @@ export default function StudentLecturePage() {
           // Doubts thread not available yet — non-fatal
         }
 
-        // Trigger processing (idempotent — backend returns immediately if already
-        // running or completed with events present)
+        // Store video_url in a ref so the WS "connected" handler can trigger
+        // processing after the socket is established (fixes the race condition
+        // where pipeline broadcasts fire before the WS connection is open).
+        // Also trigger immediately if the WS is already connected (handles the
+        // case where WS connected before loadLecture finished).
         if (lec.video_url) {
-          try {
-            await api.processLecture(lectureId)
-          } catch {
-            // Processing start failure is non-fatal
+          lectureVideoUrlRef.current = lec.video_url
+          if (
+            !processTriggeredRef.current &&
+            wsRef.current?.readyState === WebSocket.OPEN
+          ) {
+            processTriggeredRef.current = true
+            api.processLecture(lectureId).catch(() => {
+              // Processing start failure is non-fatal
+            })
           }
         }
 
@@ -247,7 +261,7 @@ export default function StudentLecturePage() {
 
     wsDestroyedRef.current = false
 
-    const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
+    const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
 
     function connect() {
       if (wsDestroyedRef.current) return
@@ -306,7 +320,18 @@ export default function StudentLecturePage() {
   function handleWsMessage(msg: Record<string, unknown>) {
     const type = msg.type as string
 
-    if (type === 'connected') return
+    if (type === 'connected') {
+      // WebSocket is now open — safe to start the pipeline. This guarantees
+      // that all broadcast messages from the pipeline are received by this
+      // client (fixes the race where processLecture was called before WS connected).
+      if (lectureVideoUrlRef.current && !processTriggeredRef.current) {
+        processTriggeredRef.current = true
+        api.processLecture(lectureId).catch(() => {
+          // Processing start failure is non-fatal
+        })
+      }
+      return
+    }
 
     // Incoming transcript chunk from pipeline
     if (type === 'transcript' || type === 'speech_event') {

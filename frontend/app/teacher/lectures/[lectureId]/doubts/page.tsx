@@ -63,7 +63,7 @@ export default function TeacherLectureDoubtsPage() {
 
   const connectWS = useCallback(() => {
     if (!lectureId || !isAuthenticated) return
-    const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
+    const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
     const token = document.cookie
       .split('; ')
       .find((c) => c.startsWith('session_token='))

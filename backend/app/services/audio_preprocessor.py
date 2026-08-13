@@ -199,56 +199,46 @@ class AudioPreprocessor:
     # AUDIO CLEANING
     # ------------------------------------------------------------------------
 
+    # Formats that require a seekable input file (moov atom at end of file).
+    # These CANNOT be reliably demuxed from a non-seekable stdin pipe.
+    _SEEKABLE_FORMATS = frozenset({"mp4", "mov", "mkv", "avi", "m4a", "m4v"})
+
     async def clean_audio(
         self,
         audio_bytes: bytes,
         input_format: str = "webm",
     ) -> bytes:
         """
-        Preprocess raw browser audio and return cleaned WAV bytes.
+        Preprocess raw audio/video bytes and return cleaned 16 kHz mono WAV.
 
         Parameters:
             audio_bytes:
-                Raw audio bytes received from browser.
+                Raw bytes — either a browser WebM/OGG chunk (live lecture)
+                or a full MP4/MKV video file downloaded from Cloudinary.
 
             input_format:
-                Browser/container format.
-
-                Common values:
-                    webm
-                    ogg
-                    mp4
-                    wav
+                Container hint: "mp4", "webm", "ogg", "wav", etc.
+                MP4/MKV/MOV/AVI are written to a temp file before FFmpeg
+                runs, because those containers require seekable access.
+                All other formats are piped via stdin.
 
         Returns:
             16 kHz mono PCM WAV bytes.
 
         Raises:
-            AudioPreprocessingError:
-                If FFmpeg processing fails.
-
-            FFmpegNotFoundError:
-                If FFmpeg is unavailable.
+            AudioPreprocessingError: FFmpeg processing failed.
+            FFmpegNotFoundError:     FFmpeg not found on PATH.
         """
 
-        # --------------------------------------------------------------------
-        # Validate input
-        # --------------------------------------------------------------------
-
         if not audio_bytes:
-            raise AudioPreprocessingError(
-                "Empty audio bytes received"
-            )
+            raise AudioPreprocessingError("Empty audio bytes received")
 
         settings = get_settings()
-
         t_start = time.monotonic()
 
         logger.debug(
-            "audio_preprocessor: preprocessing %d bytes "
-            "(format=%s)",
-            len(audio_bytes),
-            input_format,
+            "audio_preprocessor: preprocessing %d bytes (format=%s)",
+            len(audio_bytes), input_format,
         )
 
         # --------------------------------------------------------------------
@@ -264,208 +254,120 @@ class AudioPreprocessor:
             f"loudnorm"
         )
 
-        # --------------------------------------------------------------------
-        # Resolve FFmpeg
-        # --------------------------------------------------------------------
-
         ffmpeg_bin = self._get_ffmpeg()
 
         # --------------------------------------------------------------------
-        # FFmpeg command
+        # Choose input strategy
+        #
+        # MP4, MKV, MOV, AVI store their index (moov atom) at the end of the
+        # file. FFmpeg's demuxer for these formats REQUIRES seekable access —
+        # it cannot parse them from a non-seekable stdin pipe. Reading via
+        # pipe produces an empty or corrupt audio stream.
+        #
+        # Fix: write those formats to a NamedTemporaryFile first, then pass
+        # the file path to FFmpeg. Every other format (WebM, OGG, WAV, MP3,
+        # FLAC) streams fine via pipe:0.
         # --------------------------------------------------------------------
 
-        cmd = [
-            ffmpeg_bin,
+        use_tempfile = input_format.lower() in self._SEEKABLE_FORMATS
 
-            # Overwrite output if necessary
-            "-y",
+        if use_tempfile:
+            import tempfile, os as _os
 
-            # Input format from browser
-            "-f",
-            input_format,
+            def _run_with_tempfile() -> tuple[int, bytes, bytes]:
+                suffix = f".{input_format.lower()}"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(audio_bytes)
+                    tmp_path = tmp.name
+                try:
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-i", tmp_path,
+                        "-af", filter_chain,
+                        "-ar", str(settings.AUDIO_SAMPLE_RATE),
+                        "-ac", str(settings.AUDIO_CHANNELS),
+                        "-f", "wav",
+                        "-acodec", "pcm_s16le",
+                        "pipe:1",
+                    ]
+                    result = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=120.0,
+                        check=False,
+                        shell=False,
+                    )
+                    return result.returncode, result.stdout, result.stderr
+                finally:
+                    try:
+                        _os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
-            # Read audio from stdin
-            "-i",
-            "pipe:0",
-
-            # Audio filters
-            "-af",
-            filter_chain,
-
-            # Output sample rate
-            "-ar",
-            str(settings.AUDIO_SAMPLE_RATE),
-
-            # Mono
-            "-ac",
-            str(settings.AUDIO_CHANNELS),
-
-            # Output format
-            "-f",
-            "wav",
-
-            # PCM 16-bit
-            "-acodec",
-            "pcm_s16le",
-
-            # Write WAV to stdout
-            "pipe:1",
-        ]
-
-        logger.debug(
-            "audio_preprocessor: ffmpeg command prepared"
-        )
-
-        # --------------------------------------------------------------------
-        # Run FFmpeg
-        #
-        # IMPORTANT:
-        #
-        # Do NOT use:
-        #
-        #     asyncio.create_subprocess_exec()
-        #
-        # because it can raise NotImplementedError on
-        # Windows/Python 3.13 depending on the event loop.
-        #
-        # Instead:
-        #
-        #     asyncio.to_thread()
-        #
-        # runs subprocess.run() in a worker thread.
-        # --------------------------------------------------------------------
-
-        try:
-
-            returncode, stdout, stderr = await asyncio.to_thread(
-                self._run_ffmpeg,
-                cmd,
-                audio_bytes,
-            )
-
-        except subprocess.TimeoutExpired as exc:
-
-            logger.error(
-                "audio_preprocessor: FFmpeg timed out"
-            )
-
-            raise AudioPreprocessingError(
-                "FFmpeg timed out after 30 seconds"
-            ) from exc
-
-        except FileNotFoundError as exc:
-
-            # Reset cached path so the next request can resolve again.
-            self._ffmpeg = None
-
-            raise FFmpegNotFoundError(
-                f"FFmpeg executable not found at '{ffmpeg_bin}'. "
-                "Make sure FFmpeg is installed and available on PATH."
-            ) from exc
-
-        except PermissionError as exc:
-
-            raise AudioPreprocessingError(
-                "Permission denied while starting FFmpeg."
-            ) from exc
-
-        except OSError as exc:
-
-            raise AudioPreprocessingError(
-                f"Operating system error while starting FFmpeg: {exc}"
-            ) from exc
-
-        except Exception as exc:
-
-            logger.exception(
-                "audio_preprocessor: unexpected FFmpeg error"
-            )
-
-            raise AudioPreprocessingError(
-                f"FFmpeg subprocess error: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
+            try:
+                returncode, stdout, stderr = await asyncio.to_thread(_run_with_tempfile)
+            except Exception as exc:
+                raise AudioPreprocessingError(
+                    f"FFmpeg tempfile error: {type(exc).__name__}: {exc}"
+                ) from exc
+        else:
+            # Streamable formats — pipe via stdin as before
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-f", input_format,
+                "-i", "pipe:0",
+                "-af", filter_chain,
+                "-ar", str(settings.AUDIO_SAMPLE_RATE),
+                "-ac", str(settings.AUDIO_CHANNELS),
+                "-f", "wav",
+                "-acodec", "pcm_s16le",
+                "pipe:1",
+            ]
+            try:
+                returncode, stdout, stderr = await asyncio.to_thread(
+                    self._run_ffmpeg, cmd, audio_bytes,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise AudioPreprocessingError("FFmpeg timed out after 30 seconds") from exc
+            except FileNotFoundError as exc:
+                self._ffmpeg = None
+                raise FFmpegNotFoundError(
+                    f"FFmpeg executable not found at '{ffmpeg_bin}'."
+                ) from exc
+            except (PermissionError, OSError) as exc:
+                raise AudioPreprocessingError(f"OS error starting FFmpeg: {exc}") from exc
+            except Exception as exc:
+                raise AudioPreprocessingError(
+                    f"FFmpeg subprocess error: {type(exc).__name__}: {exc}"
+                ) from exc
 
         # --------------------------------------------------------------------
         # Check FFmpeg return code
         # --------------------------------------------------------------------
 
         if returncode != 0:
-
-            err_msg = stderr.decode(
-                errors="replace"
-            ).strip()
-
-            logger.error(
-                "audio_preprocessor: FFmpeg exited with code %d",
-                returncode,
-            )
-
-            logger.error(
-                "audio_preprocessor: FFmpeg stderr:\n%s",
-                err_msg,
-            )
-
+            err_msg = stderr.decode(errors="replace").strip()
+            logger.error("audio_preprocessor: FFmpeg exited with code %d\nstderr:\n%s",
+                         returncode, err_msg)
             raise AudioPreprocessingError(
-                "FFmpeg conversion failed "
-                f"(exit {returncode}): "
-                f"{err_msg[:500]}"
+                f"FFmpeg conversion failed (exit {returncode}): {err_msg[:500]}"
             )
 
-        # --------------------------------------------------------------------
-        # Validate output
-        # --------------------------------------------------------------------
-
-        if not stdout:
-
-            raise AudioPreprocessingError(
-                "FFmpeg produced no audio output"
-            )
-
-        # Basic WAV validation.
-        #
-        # WAV files normally begin with:
-        #
-        # RIFF....WAVE
-        #
-        if len(stdout) < 12:
-
-            raise AudioPreprocessingError(
-                "FFmpeg produced invalid WAV output"
-            )
+        if not stdout or len(stdout) < 12:
+            raise AudioPreprocessingError("FFmpeg produced empty or invalid WAV output")
 
         if stdout[0:4] != b"RIFF" or stdout[8:12] != b"WAVE":
-
-            logger.warning(
-                "audio_preprocessor: output does not appear "
-                "to be a standard WAV file"
-            )
-
-        # --------------------------------------------------------------------
-        # Timing
-        # --------------------------------------------------------------------
+            logger.warning("audio_preprocessor: output does not appear to be a standard WAV file")
 
         elapsed = time.monotonic() - t_start
-
         logger.debug(
-            "audio_preprocessor: preprocessing completed "
-            "in %.2f seconds (%d → %d bytes)",
-            elapsed,
-            len(audio_bytes),
-            len(stdout),
+            "audio_preprocessor: preprocessing completed in %.2f s (%d -> %d bytes)",
+            elapsed, len(audio_bytes), len(stdout),
         )
 
-        # --------------------------------------------------------------------
-        # Optional debug audio
-        # --------------------------------------------------------------------
-
         if getattr(settings, "SAVE_DEBUG_AUDIO", False):
-
             _save_debug_audio(stdout)
-
-        # --------------------------------------------------------------------
-        # Return cleaned WAV
-        # --------------------------------------------------------------------
 
         return stdout
 

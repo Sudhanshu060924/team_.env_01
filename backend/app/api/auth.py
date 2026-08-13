@@ -13,6 +13,7 @@ from fastapi import APIRouter, Cookie, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.config import get_settings
 from app.database.database import get_db
 from app.database.models import User
 from app.schemas.auth import LoginRequest, SignupRequest, UserRead
@@ -28,13 +29,14 @@ _COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 def _set_session_cookie(response: Response, user_id: str) -> str:
     token = auth_svc.create_session(user_id)
+    secure = get_settings().SECURE_COOKIES
 
     response.set_cookie(
         key=_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=secure,
+        samesite="none" if secure else "lax",
         max_age=_COOKIE_MAX_AGE,
         path="/",
     )
@@ -74,17 +76,7 @@ async def login(
         payload.password,
     )
 
-    token = auth_svc.create_session(user.id)
-
-    response.set_cookie(
-        key=_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=_COOKIE_MAX_AGE,
-        path="/",
-    )
+    _set_session_cookie(response, user.id)
 
     return auth_svc._to_read(user)
 
@@ -99,11 +91,12 @@ async def logout(
     if session_token:
         auth_svc.delete_session(session_token)
 
+    secure = get_settings().SECURE_COOKIES
     response.delete_cookie(
         key=_COOKIE_NAME,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=secure,
+        samesite="none" if secure else "lax",
         path="/",
     )
 

@@ -170,7 +170,7 @@ async def transcribe_audio(
         return result
 
     except Exception as exc:
-        logger.error("speech_service: transcription failed: %s", exc)
+        logger.error("speech_service: transcription failed: %s", exc, exc_info=True)
         return _EMPTY
 
 

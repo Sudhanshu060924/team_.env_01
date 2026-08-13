@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # Default covers local dev (Next.js dev server).
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Set to true only in production (HTTPS). When false, cookies are sent over
+    # plain HTTP so local development (http://localhost) works correctly.
+    SECURE_COOKIES: bool = False
+
     # ── Groq rate-limit management ────────────────────────────────────────────
     # How often (seconds) topic detection may run at most.
     TOPIC_DETECTION_INTERVAL_SECONDS: int = 30

@@ -13,8 +13,12 @@ from groq import AsyncGroq
 from app.config import get_settings
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=None)
+def _make_client(api_key: str) -> AsyncGroq:
+    """Create an AsyncGroq instance keyed by api_key (cached per unique key)."""
+    return AsyncGroq(api_key=api_key)
+
+
 def get_groq_client() -> AsyncGroq:
-    """Return the module-level AsyncGroq singleton (created once per process)."""
-    settings = get_settings()
-    return AsyncGroq(api_key=settings.GROQ_API_KEY)
+    """Return the AsyncGroq singleton for the current GROQ_API_KEY setting."""
+    return _make_client(get_settings().GROQ_API_KEY)
