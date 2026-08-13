@@ -165,6 +165,13 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # "ai_chat"  — message belongs to the student ↔ AI chatbot conversation
+    # "doubt"    — message belongs to the student ↔ teacher doubt conversation
+    # NULL rows (pre-migration) are treated as "doubt" throughout the service layer
+    message_type: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="doubt"
+    )
+
     # Phase 9: AI chatbot fields — only set on AI reply messages
     detected_topic: Mapped[str | None] = mapped_column(String, nullable=True)
     ai_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -177,4 +184,39 @@ class ChatMessage(Base):
     __table_args__ = (
         Index("ix_chat_messages_thread_id", "thread_id"),
         Index("ix_chat_messages_created_at", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lecture Ratings — completely separate from chat/doubts/AI
+# ---------------------------------------------------------------------------
+
+class LectureRating(Base):
+    """
+    One 1–5 star rating + optional written review per student per lecture.
+
+    Completely separate from:
+      - ChatMessage (student ↔ teacher doubts, message_type="doubt")
+      - ChatMessage (student ↔ AI chatbot,     message_type="ai_chat")
+    """
+    __tablename__ = "lecture_ratings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    lecture_id: Mapped[str] = mapped_column(
+        String, ForeignKey("lectures.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    rating: Mapped[int] = mapped_column(nullable=False)          # 1–5
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    __table_args__ = (
+        UniqueConstraint("lecture_id", "student_id", name="uq_lecture_ratings_lecture_student"),
+        Index("ix_lecture_ratings_lecture_id", "lecture_id"),
+        Index("ix_lecture_ratings_student_id", "student_id"),
     )

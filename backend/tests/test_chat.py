@@ -100,7 +100,7 @@ def _make_teacher_thread(
 
 @pytest.mark.asyncio
 async def test_student_creates_doubt():
-    """Student can post a message to their own thread."""
+    """Student can post a doubt message (Doubts tab) to their own thread."""
     student = _make_user(role="student", name="Alice")
     lecture_id = str(uuid.uuid4())
     msg = _make_chat_message(thread_id=str(uuid.uuid4()), sender_id=student.id)
@@ -111,7 +111,7 @@ async def test_student_creates_doubt():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             token = _set_session(client, student)
             resp = await client.post(
-                f"/lectures/{lecture_id}/chat",
+                f"/lectures/{lecture_id}/doubts",
                 json={"content": "Why do we use git commit?"},
             )
         auth_svc.delete_session(token)
@@ -397,7 +397,7 @@ async def test_lecture_isolation_student():
 @pytest.mark.asyncio
 async def test_messages_persist_in_database():
     """
-    Messages returned by the service come from the DB.
+    Doubt messages (Doubts tab) come from the DB.
     We verify the service is called with correct lecture_id / student_id.
     """
     student = _make_user(role="student")
@@ -416,7 +416,7 @@ async def test_messages_persist_in_database():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             token = _set_session(client, student)
             resp = await client.post(
-                f"/lectures/{lecture_id}/chat",
+                f"/lectures/{lecture_id}/doubts",
                 json={"content": "Persisted doubt"},
             )
         auth_svc.delete_session(token)

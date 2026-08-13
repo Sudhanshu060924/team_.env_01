@@ -48,6 +48,13 @@ function IconUpload() {
     </svg>
   )
 }
+function IconFeedback() {
+  return (
+    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  )
+}
 function IconHelp() {
   return (
     <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
@@ -77,6 +84,7 @@ const teacherNav: NavItem[] = [
   { label: 'My Lectures',    href: '/teacher/lectures',          icon: <IconLectures /> },
   { label: 'Upload Video',   href: '/teacher/upload',            icon: <IconUpload /> },
   { label: 'Student Doubts', href: '/teacher/doubts',            icon: <IconDoubts /> },
+  { label: 'Feedback',       href: '/teacher/feedback',          icon: <IconFeedback /> },
   { label: 'Notes',          href: '/teacher/notes',             icon: <IconNotes /> },
 ]
 

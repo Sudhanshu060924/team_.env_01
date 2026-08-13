@@ -717,6 +717,7 @@ export default function StudentLecturePage() {
           isDoubtSending={isDoubtSending}
           doubtSendError={doubtSendError}
           showDoubts={true}
+          lectureId={lectureId}
         />
       </div>
     </div>

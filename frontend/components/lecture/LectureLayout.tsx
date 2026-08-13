@@ -17,8 +17,9 @@ import ImportantEventsPanel from "./ImportantEventsPanel";
 import NotesPanel from "./NotesPanel";
 import LectureChat from "./LectureChat";
 import DoubtsPanel from "./DoubtsPanel";
+import LectureRatingPanel from "./LectureRatingPanel";
 
-type Tab = "transcript" | "topics" | "events" | "notes" | "chat" | "doubts";
+type Tab = "transcript" | "topics" | "events" | "notes" | "chat" | "doubts" | "rate";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
@@ -27,6 +28,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "notes",      label: "Notes" },
   { id: "chat",       label: "Chat" },
   { id: "doubts",     label: "Doubts" },
+  { id: "rate",       label: "Rate" },
 ];
 
 interface LectureLayoutProps {
@@ -64,6 +66,7 @@ interface LectureLayoutProps {
   isDoubtSending?: boolean;
   doubtSendError?: string | null;
   showDoubts?: boolean;
+  lectureId?: string;
 }
 
 export default function LectureLayout({
@@ -95,10 +98,15 @@ export default function LectureLayout({
   isDoubtSending = false,
   doubtSendError = null,
   showDoubts = false,
+  lectureId,
 }: LectureLayoutProps) {
   const [activeTab, setActiveTab] = useState<Tab>("transcript");
 
-  const visibleTabs = TABS.filter((tab) => tab.id !== "doubts" || showDoubts);
+  const visibleTabs = TABS.filter((tab) => {
+    if (tab.id === "doubts") return showDoubts;
+    if (tab.id === "rate") return !!lectureId;
+    return true;
+  });
 
   return (
     /*
@@ -233,6 +241,15 @@ export default function LectureLayout({
                 isSending={isDoubtSending}
                 sendError={doubtSendError}
               />
+            </div>
+          )}
+          {activeTab === "rate" && lectureId && (
+            <div
+              id="tabpanel-rate"
+              role="tabpanel"
+              aria-labelledby="tab-rate"
+            >
+              <LectureRatingPanel lectureId={lectureId} />
             </div>
           )}
         </div>

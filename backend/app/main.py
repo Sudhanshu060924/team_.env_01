@@ -154,6 +154,7 @@ try:
     from app.api.qa import router as qa_router
     from app.api.websocket import router as ws_router
     from app.api.chat import router as chat_router
+    from app.api.feedback import router as feedback_router
 
     # Authentication
     app.include_router(
@@ -187,6 +188,13 @@ try:
     app.include_router(
         ws_router,
         tags=["websocket"],
+    )
+
+    # Teacher feedback / analytics
+    app.include_router(
+        feedback_router,
+        prefix="/api/feedback",
+        tags=["feedback"],
     )
 
     logger.info("All API routers mounted successfully")

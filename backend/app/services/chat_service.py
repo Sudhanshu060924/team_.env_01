@@ -5,12 +5,17 @@ Authorization rules (all enforced here, never trusted from the frontend):
   - Students may only read/write their own thread for a given lecture.
   - Teachers may read/write all threads for lectures they own.
   - Lecture isolation: every query always filters by lecture_id.
+
+message_type values in ChatMessage:
+  "ai_chat" — created by the AI chatbot flow (student question + AI reply)
+  "doubt"   — created by the student ↔ teacher doubt flow
+  NULL      — pre-migration rows; treated as "doubt"
 """
 from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select, func, distinct
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -42,19 +47,32 @@ def _message_to_read(msg: ChatMessage) -> ChatMessageRead:
     )
 
 
-def _thread_to_read(thread: ChatThread) -> ChatThreadRead:
+def _is_doubt(msg: ChatMessage) -> bool:
+    """True for student ↔ teacher messages.  NULL message_type is legacy doubt data."""
+    return msg.message_type in ("doubt", None)
+
+
+def _is_ai_chat(msg: ChatMessage) -> bool:
+    return msg.message_type == "ai_chat"
+
+
+def _thread_to_read(thread: ChatThread, ai_chat_only: bool = False) -> ChatThreadRead:
+    if ai_chat_only:
+        messages = [_message_to_read(m) for m in thread.messages if _is_ai_chat(m)]
+    else:
+        messages = [_message_to_read(m) for m in thread.messages]
     return ChatThreadRead(
         thread_id=thread.id,
         lecture_id=thread.lecture_id,
         student_id=thread.student_id,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
-        messages=[_message_to_read(m) for m in thread.messages],
+        messages=messages,
     )
 
 
 def _thread_to_teacher_read(thread: ChatThread) -> TeacherThreadRead:
-    """Teacher view excludes AI messages — only student ↔ teacher messages."""
+    """Teacher view shows only student ↔ teacher doubt messages (no AI)."""
     student = thread.student
     return TeacherThreadRead(
         thread_id=thread.id,
@@ -63,7 +81,7 @@ def _thread_to_teacher_read(thread: ChatThread) -> TeacherThreadRead:
         messages=[
             _message_to_read(m)
             for m in thread.messages
-            if m.sender_role in ("student", "teacher")
+            if _is_doubt(m) and m.sender_role in ("student", "teacher")
         ],
     )
 
@@ -125,10 +143,14 @@ async def get_student_thread(
     lecture_id: str,
     student_id: str,
 ) -> ChatThreadRead:
-    """Return the student's full thread for this lecture (creates it if needed)."""
+    """
+    Return the student's AI-chat messages for this lecture (Chat tab).
+    Only messages with message_type="ai_chat" are included.
+    Creates the thread if it doesn't exist yet.
+    """
     await _get_lecture(db, lecture_id)
     thread = await _get_or_create_student_thread(db, lecture_id, student_id)
-    return _thread_to_read(thread)
+    return _thread_to_read(thread, ai_chat_only=True)
 
 
 async def get_student_doubt_thread(
@@ -137,13 +159,12 @@ async def get_student_doubt_thread(
     student_id: str,
 ) -> ChatThreadRead:
     """
-    Return the student's thread for this lecture but with AI messages excluded.
-    Only student and teacher messages are returned.
+    Return the student's doubt messages for this lecture (Doubts tab).
+    Only student ↔ teacher messages (message_type="doubt" or NULL) are returned.
     Creates the thread if it doesn't exist yet.
     """
     await _get_lecture(db, lecture_id)
     thread = await _get_or_create_student_thread(db, lecture_id, student_id)
-    # Filter out AI messages — doubts tab shows only student ↔ teacher messages
     doubt_only = ChatThreadRead(
         thread_id=thread.id,
         lecture_id=thread.lecture_id,
@@ -153,7 +174,7 @@ async def get_student_doubt_thread(
         messages=[
             _message_to_read(m)
             for m in thread.messages
-            if m.sender_role in ("student", "teacher")
+            if _is_doubt(m) and m.sender_role in ("student", "teacher")
         ],
     )
     return doubt_only
@@ -166,7 +187,8 @@ async def post_student_message(
     content: str,
 ) -> ChatMessageRead:
     """
-    Append a student message to their thread for this lecture.
+    Append a student doubt message to their thread for this lecture (Doubts tab).
+    Tagged as message_type="doubt" so it is never shown in the Chat tab.
     Creates the thread if it doesn't exist yet.
     """
     await _get_lecture(db, lecture_id)
@@ -177,6 +199,7 @@ async def post_student_message(
         sender_id=student_id,
         sender_role="student",
         content=content,
+        message_type="doubt",
     )
     db.add(msg)
 
@@ -226,6 +249,7 @@ async def post_teacher_reply(
 ) -> ChatMessageRead:
     """
     Append a teacher reply to a specific thread.
+    Tagged as message_type="doubt" so it appears in the student's Doubts tab.
     Verifies the teacher owns the lecture that the thread belongs to.
     """
     # Verify thread exists and belongs to this lecture
@@ -247,6 +271,7 @@ async def post_teacher_reply(
         sender_id=teacher_id,
         sender_role="teacher",
         content=content,
+        message_type="doubt",
     )
     db.add(msg)
     thread.updated_at = datetime.now(timezone.utc)
@@ -292,13 +317,14 @@ async def get_doubt_analytics(
     all_student_ids: list[str] = list(threads_result.scalars().all())
     total_students_in_threads = len(all_student_ids)
 
-    # Students who actually asked at least one question (student role)
+    # Students who asked at least one AI-chat question
     student_questions_stmt = (
         select(ChatThread.student_id)
         .join(ChatMessage, ChatMessage.thread_id == ChatThread.id)
         .where(
             ChatThread.lecture_id == lecture_id,
             ChatMessage.sender_role == "student",
+            ChatMessage.message_type == "ai_chat",
         )
         .distinct()
     )
@@ -306,13 +332,14 @@ async def get_doubt_analytics(
     students_with_doubts_ids: list[str] = list(sq_result.scalars().all())
     students_with_doubts = len(students_with_doubts_ids)
 
-    # Total student questions (not AI replies, not teacher replies)
+    # Total AI-chat questions from students (denominator for topic percentages)
     total_q_stmt = (
         select(func.count(ChatMessage.id))
         .join(ChatThread, ChatThread.id == ChatMessage.thread_id)
         .where(
             ChatThread.lecture_id == lecture_id,
             ChatMessage.sender_role == "student",
+            ChatMessage.message_type == "ai_chat",
         )
     )
     total_q_result = await db.execute(total_q_stmt)
@@ -323,16 +350,17 @@ async def get_doubt_analytics(
     #   - unique students who asked about that topic
     #   - number of student questions paired with that topic
     # We join AI messages back to the thread to get student_id.
-    # Strategy: for each AI reply, its preceding student message belongs to
-    # the same thread (student_id = thread.student_id).
 
-    # Fetch all AI messages with a detected_topic for this lecture
+    # Fetch all AI messages with a detected_topic for this lecture.
+    # Filter to message_type="ai_chat" to exclude any hypothetical
+    # future AI messages that might appear in the doubt channel.
     ai_msgs_stmt = (
         select(ChatMessage.detected_topic, ChatThread.student_id)
         .join(ChatThread, ChatThread.id == ChatMessage.thread_id)
         .where(
             ChatThread.lecture_id == lecture_id,
             ChatMessage.sender_role == "ai",
+            ChatMessage.message_type == "ai_chat",
             ChatMessage.detected_topic.isnot(None),
         )
     )

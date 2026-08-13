@@ -1,5 +1,6 @@
 import { Lecture, LectureCreate, LectureEvent } from '@/types/lecture'
 import { ChatThreadRead, TeacherThreadRead, ChatMessageRead, AIChatResponse, LectureDoubtAnalytics } from '@/types/chat'
+import { FeedbackOverview, FeedbackTopic, RatingRead, RatingCreate, RatingAnalytics, WrittenReview } from '@/types/feedback'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -155,6 +156,50 @@ export const api = {
     request<LectureDoubtAnalytics>(
       `/lectures/teacher/lectures/${lectureId}/chat/analytics`
     ),
+
+  // ── Teacher feedback / analytics endpoints ─────────────────────────────
+
+  /** Get aggregated feedback overview (all lectures, or one if lectureId given) */
+  getFeedbackOverview: (lectureId?: string) =>
+    request<FeedbackOverview>(
+      `/api/feedback/overview${lectureId ? `?lecture_id=${lectureId}` : ''}`
+    ),
+
+  /** Get per-topic breakdown (all lectures, or one if lectureId given) */
+  getFeedbackTopics: (lectureId?: string) =>
+    request<FeedbackTopic[]>(
+      `/api/feedback/topics${lectureId ? `?lecture_id=${lectureId}` : ''}`
+    ),
+
+  // ── Rating analytics (teacher) ──────────────────────────────────────────
+
+  /** Get rating distribution analytics for one lecture (teacher) */
+  getLectureRatingAnalytics: (lectureId: string) =>
+    request<RatingAnalytics>(`/api/feedback/lectures/${lectureId}/ratings/analytics`),
+
+  /** Get written reviews for one lecture (teacher, anonymized) */
+  getLectureWrittenReviews: (lectureId: string) =>
+    request<WrittenReview[]>(`/api/feedback/lectures/${lectureId}/ratings/reviews`),
+
+  // ── Student rating endpoints ────────────────────────────────────────────
+
+  /** Get the authenticated user's own rating for a lecture (null if none) */
+  getMyRating: (lectureId: string) =>
+    request<RatingRead | null>(`/api/feedback/lectures/${lectureId}/rating`),
+
+  /** Create the student's rating (upserts if exists) */
+  createRating: (lectureId: string, payload: RatingCreate) =>
+    request<RatingRead>(`/api/feedback/lectures/${lectureId}/rating`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** Update the student's existing rating */
+  updateRating: (lectureId: string, payload: RatingCreate) =>
+    request<RatingRead>(`/api/feedback/lectures/${lectureId}/rating`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 }
 
 export default api
