@@ -22,15 +22,22 @@ class FeedbackOverview(BaseModel):
     total_ratings: int = 0
     most_rated_lecture: Optional[str] = None
     lowest_rated_lecture: Optional[str] = None
+    # Teacher performance score — populated by extended service
+    teacher_score: Optional["TeacherPerformanceScore"] = None
 
 
 class FeedbackTopic(BaseModel):
-    """Per-topic breakdown row."""
+    """Per-topic breakdown row — extended with playback + doubt data."""
     topic: str
     question_count: int
     percentage: float
     lecture_id: Optional[str] = None
     lecture_title: Optional[str] = None
+    # Extended fields (populated when playback data exists)
+    replay_count:   int = 0
+    rewind_count:   int = 0
+    pause_count:    int = 0
+    completion_pct: float = 0.0
 
 
 class FeedbackTopicDetail(BaseModel):
@@ -101,3 +108,39 @@ class WrittenReview(BaseModel):
     rating: int
     feedback: str
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Problem Solving (Student ↔ Teacher doubts — separate from AI chat)
+# ---------------------------------------------------------------------------
+
+class ProblemSolvingStats(BaseModel):
+    """Aggregated doubt/problem-solving analytics for a teacher."""
+    total_doubts: int = 0
+    answered_doubts: int = 0
+    response_rate_pct: float = 0.0       # 0–100
+    avg_response_time_minutes: Optional[float] = None
+    resolved_pct: float = 0.0           # answered / total × 100
+
+
+# ---------------------------------------------------------------------------
+# Teacher Performance Score
+# ---------------------------------------------------------------------------
+
+class TeacherPerformanceScore(BaseModel):
+    """
+    Composite teacher performance score in the range [0, 5].
+
+    Sub-scores are on the same 0–5 scale.
+    None means not enough data to compute that sub-score yet.
+    """
+    overall:            Optional[float] = None   # final composite score
+    overall_rating:     Optional[float] = None   # from lecture ratings
+    problem_solving:    Optional[float] = None   # from doubts analytics
+    student_engagement: Optional[float] = None   # from playback engagement
+    lecture_completion: Optional[float] = None   # from playback completion
+    ai_dependency:      Optional[float] = None   # combined signal
+
+
+# Update FeedbackOverview forward ref
+FeedbackOverview.model_rebuild()

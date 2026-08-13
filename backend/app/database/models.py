@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Float, Text, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import String, Float, Text, DateTime, Integer, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -219,4 +219,58 @@ class LectureRating(Base):
         UniqueConstraint("lecture_id", "student_id", name="uq_lecture_ratings_lecture_student"),
         Index("ix_lecture_ratings_lecture_id", "lecture_id"),
         Index("ix_lecture_ratings_student_id", "student_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Playback Analytics — completely separate from chat/doubts/ratings
+# ---------------------------------------------------------------------------
+
+class PlaybackAnalytics(Base):
+    """
+    One upserted row per (student, lecture) — updated on each batched flush
+    from the video player.
+
+    Completely separate from:
+      - ChatMessage (doubts / AI chat)
+      - LectureRating (star ratings + written feedback)
+
+    revisit_segments: JSON list of {start, end, event_type, count} dicts.
+    """
+    __tablename__ = "playback_analytics"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    lecture_id: Mapped[str] = mapped_column(
+        String, ForeignKey("lectures.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # aggregate counters
+    play_count:    Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+    pause_count:   Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+    rewind_count:  Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+    forward_count: Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+    replay_count:  Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+    seek_count:    Mapped[int]   = mapped_column(Integer, nullable=False, default=0)
+
+    # watch metrics
+    total_watch_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    completion_pct:      Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # revisit heatmap: [{start, end, event_type, count}]
+    revisit_segments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "lecture_id", "student_id",
+            name="uq_playback_analytics_lecture_student",
+        ),
+        Index("ix_playback_analytics_lecture_id", "lecture_id"),
+        Index("ix_playback_analytics_student_id", "student_id"),
     )

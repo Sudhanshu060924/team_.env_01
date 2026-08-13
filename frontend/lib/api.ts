@@ -1,6 +1,17 @@
 import { Lecture, LectureCreate, LectureEvent } from '@/types/lecture'
 import { ChatThreadRead, TeacherThreadRead, ChatMessageRead, AIChatResponse, LectureDoubtAnalytics } from '@/types/chat'
-import { FeedbackOverview, FeedbackTopic, RatingRead, RatingCreate, RatingAnalytics, WrittenReview } from '@/types/feedback'
+import {
+  FeedbackOverview,
+  FeedbackTopic,
+  RatingRead,
+  RatingCreate,
+  RatingAnalytics,
+  WrittenReview,
+  LectureEngagementStats,
+  ProblemSolvingStats,
+  TeacherPerformanceScore,
+  PlaybackFlush,
+} from '@/types/feedback'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -200,6 +211,43 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  // ── Lecture Engagement (teacher) ───────────────────────────────────────
+
+  /** Get aggregated video playback engagement stats (all or one lecture) */
+  getLectureEngagement: (lectureId?: string) =>
+    request<LectureEngagementStats>(
+      `/api/feedback/engagement${lectureId ? `?lecture_id=${lectureId}` : ''}`
+    ),
+
+  // ── Problem Solving (teacher) ──────────────────────────────────────────
+
+  /** Get doubt/problem-solving analytics (all or one lecture) */
+  getProblemSolving: (lectureId?: string) =>
+    request<ProblemSolvingStats>(
+      `/api/feedback/problem-solving${lectureId ? `?lecture_id=${lectureId}` : ''}`
+    ),
+
+  // ── Teacher Performance Score ──────────────────────────────────────────
+
+  /** Get the teacher's calculated performance score (teacher-wide) */
+  getTeacherScore: () =>
+    request<TeacherPerformanceScore>('/api/feedback/teacher-score'),
+
+  // ── Playback tracking (student) ────────────────────────────────────────
+
+  /**
+   * Flush batched video playback events to the backend.
+   * Call on pause, seek, unload, and periodically (debounced — not on timeupdate).
+   */
+  flushPlayback: (lectureId: string, payload: PlaybackFlush) =>
+    fetch(`${API_BASE}/api/feedback/lectures/${lectureId}/playback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+      keepalive: true,    // survives page unload
+    }).then(() => undefined),
 }
 
 export default api

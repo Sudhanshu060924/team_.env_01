@@ -86,6 +86,21 @@ const mdComponents: Components = {
 
 // ── PDF generation ─────────────────────────────────────────────────────────────
 
+// Convert an ArrayBuffer to a base64 string (works in all browsers)
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+// Font name constants used throughout the PDF renderer
+const FONT_NAME = "NotoSansDevanagari";
+const FONT_FILE = "NotoSansDevanagari-Regular.ttf";
+
 async function downloadNotesPdf(
   markdown: string,
   lectureTitle: string,
@@ -100,6 +115,37 @@ async function downloadNotesPdf(
     format: "a4",
   });
 
+  // ── Register Noto Sans Devanagari for full Unicode / Hindi support ──────────
+  // Fetch the TTF from /public/fonts (served statically by Next.js).
+  // We load it here (once per PDF generation) so the font is embedded in the
+  // PDF and Hindi/Devanagari characters render correctly on all viewers.
+  try {
+    const fontUrl = "/fonts/NotoSansDevanagari-Regular.ttf";
+    const resp = await fetch(fontUrl);
+    if (resp.ok) {
+      const buffer = await resp.arrayBuffer();
+      const b64 = arrayBufferToBase64(buffer);
+      doc.addFileToVFS(FONT_FILE, b64);
+      doc.addFont(FONT_FILE, FONT_NAME, "normal");
+    }
+  } catch {
+    // If the font fails to load (e.g. offline), fall back to helvetica.
+    // English / Hinglish text will still render; Devanagari will be missing.
+  }
+
+  // Helper: set font — uses Noto Sans Devanagari when available, otherwise
+  // falls back to helvetica so the layout never breaks.
+  const hasDev = doc.getFontList()[FONT_NAME] !== undefined;
+  const setDocFont = (style: "normal" | "bold" = "normal") => {
+    if (hasDev) {
+      // Noto Sans Devanagari is a single-weight variable font; jsPDF only
+      // needs one variant registered.  Bold headings are handled via font size.
+      doc.setFont(FONT_NAME, "normal");
+    } else {
+      doc.setFont("helvetica", style);
+    }
+  };
+
   // Page geometry
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -110,7 +156,7 @@ async function downloadNotesPdf(
   const maxW = pageW - marginL - marginR;
 
   let y = marginT;
-  const lineH = 6;
+  const lineH = 7;
   const sectionGap = 4;
 
   // Helper: add a new page if needed
@@ -127,6 +173,7 @@ async function downloadNotesPdf(
     const total = doc.getNumberOfPages();
     doc.setFontSize(9);
     doc.setTextColor(150, 150, 150);
+    setDocFont();
     doc.text(
       `Page ${currentPage} of ${total}`,
       pageW / 2,
@@ -139,6 +186,7 @@ async function downloadNotesPdf(
   // ── Header ──────────────────────────────────────────────────────────────────
   doc.setFontSize(9);
   doc.setTextColor(100, 100, 100);
+  setDocFont();
   doc.text("VidyaRoom", marginL, y);
   doc.text("Lecture Notes", pageW - marginR, y, { align: "right" });
   y += 5;
@@ -151,7 +199,7 @@ async function downloadNotesPdf(
   // Title
   doc.setFontSize(16);
   doc.setTextColor(0, 0, 0);
-  doc.setFont("helvetica", "bold");
+  setDocFont("bold");
   const titleLines = doc.splitTextToSize(lectureTitle || "Lecture Notes", maxW);
   checkPage(titleLines.length * 8);
   doc.text(titleLines, marginL, y);
@@ -160,7 +208,7 @@ async function downloadNotesPdf(
   // Language badge
   doc.setFontSize(9);
   doc.setTextColor(100, 100, 100);
-  doc.setFont("helvetica", "normal");
+  setDocFont();
   const langLabel =
     language === "hindi"
       ? "Hindi"
@@ -189,7 +237,7 @@ async function downloadNotesPdf(
     if (line.startsWith("# ")) {
       const text = line.replace(/^# /, "");
       doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
+      setDocFont("bold");
       doc.setTextColor(0, 0, 0);
       const wrapped = doc.splitTextToSize(text, maxW);
       checkPage(wrapped.length * 7 + sectionGap);
@@ -206,8 +254,8 @@ async function downloadNotesPdf(
     // H2
     if (line.startsWith("## ")) {
       const text = line.replace(/^## /, "");
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      setDocFont("bold");
       doc.setTextColor(0, 0, 0);
       const wrapped = doc.splitTextToSize(text, maxW);
       checkPage(wrapped.length * 6.5 + sectionGap);
@@ -220,8 +268,8 @@ async function downloadNotesPdf(
     // H3
     if (line.startsWith("### ")) {
       const text = line.replace(/^### /, "");
-      doc.setFontSize(10.5);
-      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      setDocFont("bold");
       doc.setTextColor(30, 30, 30);
       const wrapped = doc.splitTextToSize(text, maxW);
       checkPage(wrapped.length * 6 + 2);
@@ -234,8 +282,8 @@ async function downloadNotesPdf(
     // Bullet list item  (- or *)
     if (/^[\-\*]\s/.test(line)) {
       const text = line.replace(/^[\-\*]\s/, "").replace(/\*\*/g, "");
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      setDocFont();
       doc.setTextColor(40, 40, 40);
       const wrapped = doc.splitTextToSize(text, maxW - 8);
       checkPage(wrapped.length * lineH);
@@ -253,7 +301,7 @@ async function downloadNotesPdf(
       const num = numbered[1];
       const text = numbered[2].replace(/\*\*/g, "");
       doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
+      setDocFont();
       doc.setTextColor(40, 40, 40);
       const wrapped = doc.splitTextToSize(text, maxW - 10);
       checkPage(wrapped.length * lineH);
@@ -282,7 +330,7 @@ async function downloadNotesPdf(
     const text = line.replace(/\*\*/g, "").replace(/`([^`]+)`/g, "$1");
     if (text.trim()) {
       doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
+      setDocFont();
       doc.setTextColor(40, 40, 40);
       const wrapped = doc.splitTextToSize(text, maxW);
       checkPage(wrapped.length * lineH);

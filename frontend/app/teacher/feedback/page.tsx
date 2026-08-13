@@ -5,7 +5,15 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
 import { Lecture } from '@/types/lecture'
-import { FeedbackOverview, FeedbackTopic, RatingAnalytics, WrittenReview } from '@/types/feedback'
+import {
+  FeedbackOverview,
+  FeedbackTopic,
+  RatingAnalytics,
+  WrittenReview,
+  LectureEngagementStats,
+  ProblemSolvingStats,
+  TeacherPerformanceScore,
+} from '@/types/feedback'
 import AppShell from '@/components/layout/AppShell'
 import AppHeader from '@/components/layout/AppHeader'
 import PageContainer from '@/components/layout/PageContainer'
@@ -15,6 +23,20 @@ import PageContainer from '@/components/layout/PageContainer'
 function formatRating(v: number | null | undefined): string {
   if (v == null) return '—'
   return v.toFixed(1)
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || seconds <= 0) return '—'
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  if (m === 0) return `${s}s`
+  return `${m}m ${s}s`
+}
+
+function formatSegmentTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 function StarDisplay({ value }: { value: number }) {
@@ -143,10 +165,13 @@ function TopicBarChart({ topics, activeTopicName, onTopicClick }: {
       </svg>
       {tooltip && (
         <div className="pointer-events-none absolute z-20 bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs"
-          style={{ left: Math.min(tooltip.x + 12, SVG_WIDTH - 140), top: Math.max(tooltip.y - 60, 0), minWidth: 130 }}>
+          style={{ left: Math.min(tooltip.x + 12, SVG_WIDTH - 180), top: Math.max(tooltip.y - 60, 0), minWidth: 160 }}>
           <p className="font-semibold text-black mb-1">{tooltip.topic.topic}</p>
-          <p className="text-gray-600">{tooltip.topic.question_count} question{tooltip.topic.question_count !== 1 ? 's' : ''}</p>
+          <p className="text-gray-600">{tooltip.topic.question_count} AI question{tooltip.topic.question_count !== 1 ? 's' : ''}</p>
           <p className="text-yellow-700 font-semibold">{tooltip.topic.percentage}%</p>
+          {tooltip.topic.replay_count > 0 && <p className="text-blue-600 mt-0.5">↺ Replays: {tooltip.topic.replay_count}</p>}
+          {tooltip.topic.rewind_count > 0 && <p className="text-purple-600">⏪ Rewinds: {tooltip.topic.rewind_count}</p>}
+          {tooltip.topic.completion_pct > 0 && <p className="text-green-600">✓ Completion: {tooltip.topic.completion_pct.toFixed(0)}%</p>}
           {tooltip.topic.lecture_title && <p className="text-gray-400 mt-0.5 truncate">{tooltip.topic.lecture_title}</p>}
         </div>
       )}
@@ -154,7 +179,7 @@ function TopicBarChart({ topics, activeTopicName, onTopicClick }: {
   )
 }
 
-// ── Topic Table ───────────────────────────────────────────────────────────────
+// ── Topic Table (extended with playback columns) ──────────────────────────────
 
 function TopicTable({ topics, activeTopic, onRowClick }: {
   topics: FeedbackTopic[]
@@ -162,6 +187,7 @@ function TopicTable({ topics, activeTopic, onRowClick }: {
   // eslint-disable-next-line no-unused-vars
   onRowClick: (topic: FeedbackTopic) => void
 }) {
+  const hasPlayback = topics.some((t) => t.replay_count > 0 || t.rewind_count > 0 || t.pause_count > 0)
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse">
@@ -170,8 +196,14 @@ function TopicTable({ topics, activeTopic, onRowClick }: {
             <th className="text-left py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold">Topic</th>
             <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold">Questions</th>
             <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold">Share</th>
+            {hasPlayback && <>
+              <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden sm:table-cell">Replays</th>
+              <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden sm:table-cell">Rewinds</th>
+              <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden md:table-cell">Pauses</th>
+              <th className="text-right py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden md:table-cell">Completion</th>
+            </>}
             {topics.some((t) => t.lecture_title) && (
-              <th className="text-left py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden sm:table-cell">Lecture</th>
+              <th className="text-left py-3 px-3 text-xs uppercase tracking-wider text-gray-500 font-semibold hidden lg:table-cell">Lecture</th>
             )}
           </tr>
         </thead>
@@ -193,8 +225,16 @@ function TopicTable({ topics, activeTopic, onRowClick }: {
                 <td className="py-2.5 px-3 text-right">
                   <span className={['font-semibold', isTop ? 'text-yellow-700' : 'text-gray-600'].join(' ')}>{t.percentage}%</span>
                 </td>
+                {hasPlayback && <>
+                  <td className="py-2.5 px-3 text-right text-blue-600 font-medium hidden sm:table-cell">{t.replay_count || '—'}</td>
+                  <td className="py-2.5 px-3 text-right text-purple-600 font-medium hidden sm:table-cell">{t.rewind_count || '—'}</td>
+                  <td className="py-2.5 px-3 text-right text-gray-500 hidden md:table-cell">{t.pause_count || '—'}</td>
+                  <td className="py-2.5 px-3 text-right text-green-600 font-medium hidden md:table-cell">
+                    {t.completion_pct > 0 ? `${t.completion_pct.toFixed(0)}%` : '—'}
+                  </td>
+                </>}
                 {topics.some((x) => x.lecture_title) && (
-                  <td className="py-2.5 px-3 text-gray-500 text-xs hidden sm:table-cell truncate max-w-[180px]">{t.lecture_title ?? '—'}</td>
+                  <td className="py-2.5 px-3 text-gray-500 text-xs hidden lg:table-cell truncate max-w-[180px]">{t.lecture_title ?? '—'}</td>
                 )}
               </tr>
             )
@@ -252,16 +292,12 @@ function RatingDistributionChart({ analytics }: { analytics: RatingAnalytics }) 
               onMouseLeave={() => { setHovered(null); setTooltip(null) }}
             >
               <rect x={0} y={y} width={SVG_WIDTH} height={BAR_HEIGHT} fill="transparent" />
-              {/* Star label */}
               <text x={LABEL_WIDTH - 6} y={y + BAR_HEIGHT / 2 + 4} textAnchor="end" fontSize={12} fill={isHov ? '#92400e' : '#374151'} fontWeight={isHov ? '600' : '400'}>
                 {'★'.repeat(star)}
               </text>
-              {/* Track */}
               <rect x={LABEL_WIDTH} y={y + 8} width={BAR_AREA} height={BAR_HEIGHT - 16} fill="#f3f4f6" rx={4} />
-              {/* Fill */}
               <rect x={LABEL_WIDTH} y={y + 8} width={Math.max(barW, 0)} height={BAR_HEIGHT - 16}
                 fill={isHov ? '#f59e0b' : '#fbbf24'} rx={4} style={{ transition: 'width 0.4s ease' }} />
-              {/* Percent label */}
               <text x={LABEL_WIDTH + BAR_AREA + 6} y={y + BAR_HEIGHT / 2 + 4} fontSize={11} fill="#6b7280" fontWeight="600">
                 {pct}%
               </text>
@@ -317,6 +353,238 @@ function ReviewsList({ reviews }: { reviews: WrittenReview[] }) {
   )
 }
 
+// ── Lecture Engagement Section ────────────────────────────────────────────────
+
+function EngagementSection({ engagement }: { engagement: LectureEngagementStats }) {
+  const hasData = engagement.total_views > 0
+
+  const iconPlay = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-6.518-3.75A1 1 0 007 8.25v7.5a1 1 0 001.234.97l6.518-1.874a1 1 0 000-1.944z" /></svg>
+  const iconPause = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6" /></svg>
+  const iconReplay = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+  const iconRewind = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" /></svg>
+
+  if (!hasData) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <SectionHeading>Lecture Engagement</SectionHeading>
+        <p className="text-sm text-gray-400 italic text-center py-4">No engagement data yet.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-6">
+      <div className="mb-3"><SectionHeading>Lecture Engagement</SectionHeading></div>
+
+      {/* Engagement stat cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <p className="text-xs text-gray-500 mb-1">Total Views</p>
+          <p className="text-xl font-bold text-black">{engagement.total_views}</p>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <p className="text-xs text-gray-500 mb-1">Avg Watch Time</p>
+          <p className="text-xl font-bold text-black">{formatTime(engagement.avg_watch_seconds)}</p>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <p className="text-xs text-gray-500 mb-1">Avg Completion</p>
+          <p className="text-xl font-bold text-black">{engagement.avg_completion_pct.toFixed(0)}%</p>
+          <div className="mt-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-green-400 rounded-full" style={{ width: `${engagement.avg_completion_pct}%` }} />
+          </div>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <p className="text-xs text-gray-500 mb-1">Play Count</p>
+          <p className="text-xl font-bold text-black">{engagement.play_count}</p>
+        </div>
+      </div>
+
+      {/* Interaction breakdown */}
+      <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
+        <p className="text-xs uppercase tracking-wider text-gray-400 font-semibold mb-3">Interaction Breakdown</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          {[
+            { label: 'Pauses', value: engagement.pause_count, icon: iconPause, color: 'text-yellow-600' },
+            { label: 'Replays', value: engagement.replay_count, icon: iconReplay, color: 'text-blue-600' },
+            { label: 'Rewinds', value: engagement.rewind_count, icon: iconRewind, color: 'text-purple-600' },
+            { label: 'Forwards', value: engagement.forward_count, icon: iconPlay, color: 'text-gray-500' },
+            { label: 'Seeks', value: engagement.seek_count, icon: iconPlay, color: 'text-gray-400' },
+          ].map(({ label, value, icon, color }) => (
+            <div key={label} className="flex items-center gap-3">
+              <div className={`shrink-0 ${color}`}>{icon}</div>
+              <div>
+                <p className="font-semibold text-black">{value}</p>
+                <p className="text-[11px] text-gray-500">{label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Revisit timeline */}
+      {engagement.revisit_segments.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Frequently Revisited Sections</p>
+            <p className="text-[10px] text-gray-400">Top {engagement.revisit_segments.length} section{engagement.revisit_segments.length !== 1 ? 's' : ''}</p>
+          </div>
+          <div className="flex flex-col gap-2">
+            {engagement.revisit_segments.map((seg, i) => (
+              <div key={i} className={[
+                'rounded-lg p-3 border',
+                seg.label.includes('Frequently') ? 'border-blue-200 bg-blue-50' :
+                seg.label.includes('difficult') ? 'border-amber-200 bg-amber-50' :
+                'border-gray-200 bg-gray-50'
+              ].join(' ')}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={['text-xs font-semibold',
+                      seg.label.includes('Frequently') ? 'text-blue-700' :
+                      seg.label.includes('difficult') ? 'text-amber-700' :
+                      'text-gray-600'
+                    ].join(' ')}>{seg.label}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {formatSegmentTime(seg.start)} – {formatSegmentTime(seg.end)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-black text-sm">{seg.count}×</p>
+                    <p className="text-[11px] text-gray-400 capitalize">{seg.event_type}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-gray-400 mt-3 italic">
+            Note: Revisited sections indicate student interest or difficulty — context determines which.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Problem Solving Section ───────────────────────────────────────────────────
+
+function ProblemSolvingSection({ ps }: { ps: ProblemSolvingStats }) {
+  const hasData = ps.total_doubts > 0
+
+  if (!hasData) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <SectionHeading>Problem Solving</SectionHeading>
+        <p className="text-sm text-gray-400 italic text-center py-4">No student doubts yet.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-5 mb-6">
+      <div className="mb-4"><SectionHeading>Problem Solving</SectionHeading></div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
+        <div>
+          <p className="text-2xl font-bold text-black">{ps.total_doubts}</p>
+          <p className="text-xs text-gray-500 mt-0.5">Total Doubts</p>
+        </div>
+        <div>
+          <p className="text-2xl font-bold text-black">{ps.answered_doubts}</p>
+          <p className="text-xs text-gray-500 mt-0.5">Answered</p>
+        </div>
+        <div>
+          <p className="text-2xl font-bold text-black">{ps.response_rate_pct.toFixed(0)}%</p>
+          <p className="text-xs text-gray-500 mt-0.5">Response Rate</p>
+        </div>
+      </div>
+      <div>
+        <div className="flex justify-between text-xs text-gray-500 mb-1">
+          <span>Response rate</span>
+          <span>{ps.response_rate_pct.toFixed(0)}%</span>
+        </div>
+        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-full bg-green-400 rounded-full transition-all duration-500"
+            style={{ width: `${ps.response_rate_pct}%` }} />
+        </div>
+      </div>
+      <p className="text-[10px] text-gray-400 mt-2 italic">
+        Counts only Student ↔ Teacher doubts. AI chat questions are separate.
+      </p>
+    </div>
+  )
+}
+
+// ── Teacher Performance Score Section ────────────────────────────────────────
+
+function ScoreBar({ label, value }: { label: string; value: number | null }) {
+  if (value == null) return (
+    <div className="flex items-center gap-3 mb-2">
+      <p className="text-sm text-gray-600 w-44 shrink-0">{label}</p>
+      <p className="text-xs text-gray-400 italic">No data yet</p>
+    </div>
+  )
+  const pct = (value / 5) * 100
+  const color = value >= 4 ? 'bg-green-400' : value >= 3 ? 'bg-yellow-400' : 'bg-orange-400'
+  return (
+    <div className="flex items-center gap-3 mb-2">
+      <p className="text-sm text-gray-700 w-44 shrink-0">{label}</p>
+      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-sm font-semibold text-black w-8 text-right shrink-0">{value.toFixed(1)}</p>
+    </div>
+  )
+}
+
+function TeacherScoreSection({ score }: { score: TeacherPerformanceScore }) {
+  const overall = score.overall
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-5 mb-6">
+      <SectionHeading>Teacher Performance</SectionHeading>
+
+      {/* Overall score display */}
+      <div className="flex items-center gap-4 mb-5 pb-5 border-b border-gray-100">
+        <div className="text-center">
+          <p className="text-4xl font-bold text-black">{overall != null ? overall.toFixed(1) : '—'}</p>
+          <div className="flex justify-center mt-1">
+            {overall != null ? <StarDisplay value={overall} /> : <p className="text-xs text-gray-400">No ratings yet</p>}
+          </div>
+          <p className="text-[10px] text-gray-400 mt-1">out of 5.0</p>
+        </div>
+        <div className="flex-1 text-sm text-gray-500">
+          {overall == null
+            ? <p className="italic">Not enough data to calculate a score yet.</p>
+            : <p>Composite score based on ratings, student engagement, problem solving, lecture completion, and AI usage patterns.</p>
+          }
+        </div>
+      </div>
+
+      {/* Sub-scores */}
+      <div className="mb-4">
+        <ScoreBar label="Overall Rating" value={score.overall_rating} />
+        <ScoreBar label="Problem Solving" value={score.problem_solving} />
+        <ScoreBar label="Student Engagement" value={score.student_engagement} />
+        <ScoreBar label="Lecture Completion" value={score.lecture_completion} />
+        <ScoreBar label="AI Usage Signal" value={score.ai_dependency} />
+      </div>
+
+      {/* Score explanation */}
+      <details className="mt-2">
+        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700 select-none">
+          How is this score calculated?
+        </summary>
+        <div className="mt-2 text-xs text-gray-500 space-y-1 leading-relaxed">
+          <p><strong>Overall Rating (35%):</strong> Average lecture star rating from students.</p>
+          <p><strong>Problem Solving (25%):</strong> Percentage of student doubts answered by the teacher.</p>
+          <p><strong>Student Engagement (20%):</strong> Combination of average lecture completion and interactive behaviors (pauses, replays, rewinds).</p>
+          <p><strong>Lecture Completion (10%):</strong> Average percentage of lecture watched by students.</p>
+          <p><strong>AI Usage Signal (10%):</strong> AI questions combined with completion and replay patterns. High AI questions + high completion = curious students. High AI questions + low completion + many rewinds = students may be struggling.</p>
+          <p className="italic text-gray-400 mt-1">Weights are configured in the backend and can be adjusted without code changes.</p>
+        </div>
+      </details>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function TeacherFeedbackPage() {
@@ -330,11 +598,15 @@ export default function TeacherFeedbackPage() {
   const [topics, setTopics] = useState<FeedbackTopic[]>([])
   const [ratingAnalytics, setRatingAnalytics] = useState<RatingAnalytics | null>(null)
   const [reviews, setReviews] = useState<WrittenReview[]>([])
+  const [engagement, setEngagement] = useState<LectureEngagementStats | null>(null)
+  const [problemSolving, setProblemSolving] = useState<ProblemSolvingStats | null>(null)
 
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [topicsLoading, setTopicsLoading] = useState(true)
   const [ratingsLoading, setRatingsLoading] = useState(false)
   const [reviewsLoading, setReviewsLoading] = useState(false)
+  const [engagementLoading, setEngagementLoading] = useState(true)
+  const [psLoading, setPsLoading] = useState(true)
 
   const [error, setError] = useState<string | null>(null)
   const [activeTopic, setActiveTopic] = useState<FeedbackTopic | null>(null)
@@ -357,6 +629,8 @@ export default function TeacherFeedbackPage() {
     if (!isAuthenticated) return
     setOverviewLoading(true)
     setTopicsLoading(true)
+    setEngagementLoading(true)
+    setPsLoading(true)
     setActiveTopic(null)
     setError(null)
     setRatingAnalytics(null)
@@ -371,6 +645,16 @@ export default function TeacherFeedbackPage() {
       .then(setTopics)
       .catch(() => {})
       .finally(() => setTopicsLoading(false))
+
+    api.getLectureEngagement(lectureIdArg)
+      .then(setEngagement)
+      .catch(() => setEngagement({ total_views: 0, avg_watch_seconds: 0, avg_completion_pct: 0, play_count: 0, pause_count: 0, rewind_count: 0, forward_count: 0, replay_count: 0, seek_count: 0, revisit_segments: [] }))
+      .finally(() => setEngagementLoading(false))
+
+    api.getProblemSolving(lectureIdArg)
+      .then(setProblemSolving)
+      .catch(() => setProblemSolving({ total_doubts: 0, answered_doubts: 0, response_rate_pct: 0, avg_response_time_minutes: null, resolved_pct: 0 }))
+      .finally(() => setPsLoading(false))
 
     // Rating analytics + reviews only available when a specific lecture is selected
     if (lectureIdArg) {
@@ -400,19 +684,21 @@ export default function TeacherFeedbackPage() {
   }
 
   const hasTopics = !overviewLoading && !topicsLoading && topics.length > 0
-  const hasNoData = !overviewLoading && !topicsLoading && topics.length === 0
+  const hasNoData = !overviewLoading && !topicsLoading && !engagementLoading && topics.length === 0
     && (overview?.total_ratings ?? 0) === 0 && !error
+    && (engagement?.total_views ?? 0) === 0
   const showRatings = !!lectureIdArg
 
   // Icons
   const iconLectures = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.069A1 1 0 0121 8.862v6.276a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
   const iconStudents = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-4A4 4 0 1112 4a4 4 0 010 8z" /></svg>
-  const iconQuestion = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
   const iconDoubts = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" /></svg>
   const iconAI = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
   const iconTopic = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
   const iconStar = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
   const iconRatings = <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+
+  const teacherScore = overview?.teacher_score ?? null
 
   return (
     <AppShell role="teacher">
@@ -441,24 +727,16 @@ export default function TeacherFeedbackPage() {
         {/* ── Overview stat cards ── */}
         {overviewLoading ? <Spinner /> : overview ? (
           <>
-            {/* Section A: Lecture Engagement */}
+            {/* Section A: Overview */}
             <div className="mb-2">
-              <SectionHeading>Lecture Engagement</SectionHeading>
+              <SectionHeading>Overview</SectionHeading>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
               <StatCard label="Total Lectures" value={overview.total_lectures} accent icon={iconLectures} />
               <StatCard label="Total Students" value={overview.total_students} icon={iconStudents} />
-              <StatCard label="Total Questions" value={overview.total_questions} icon={iconQuestion} />
-              <StatCard label="Teacher-Student Doubts" value={overview.total_doubts} icon={iconDoubts} />
-              <StatCard label="AI Chatbot Questions" value={overview.total_ai_questions} icon={iconAI} />
+              <StatCard label="AI Questions" value={overview.total_ai_questions} icon={iconAI} />
+              <StatCard label="Student Doubts" value={overview.total_doubts} icon={iconDoubts} />
               <StatCard label="Most Asked Topic" value={overview.most_asked_topic ?? '—'} accent={!!overview.most_asked_topic} icon={iconTopic} />
-            </div>
-
-            {/* Section B: Lecture Quality */}
-            <div className="mb-2">
-              <SectionHeading>Lecture Quality</SectionHeading>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
               <StatCard
                 label="Average Rating"
                 accent={overview.avg_rating != null}
@@ -472,6 +750,13 @@ export default function TeacherFeedbackPage() {
                   ) : '—'
                 }
               />
+            </div>
+
+            {/* Section B: Lecture Quality */}
+            <div className="mb-2">
+              <SectionHeading>Lecture Quality</SectionHeading>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
               <StatCard label="Total Ratings" value={overview.total_ratings} icon={iconRatings} />
               <StatCard
                 label="Most Rated Lecture"
@@ -479,9 +764,28 @@ export default function TeacherFeedbackPage() {
                 accent={!!overview.most_rated_lecture}
                 icon={iconStar}
               />
+              {/* Teacher Performance Score summary card */}
+              {teacherScore && (
+                <StatCard
+                  label="Teacher Performance"
+                  accent={teacherScore.overall != null}
+                  icon={iconStar}
+                  value={
+                    teacherScore.overall != null ? (
+                      <span className="flex items-center gap-1.5">
+                        <StarDisplay value={teacherScore.overall} />
+                        <span className="text-xl font-bold">{teacherScore.overall.toFixed(1)}</span>
+                      </span>
+                    ) : 'No data yet'
+                  }
+                />
+              )}
             </div>
           </>
         ) : null}
+
+        {/* ── Teacher Performance Score (detailed) ── */}
+        {teacherScore && <TeacherScoreSection score={teacherScore} />}
 
         {/* ── Empty state ── */}
         {hasNoData && (
@@ -492,9 +796,23 @@ export default function TeacherFeedbackPage() {
               </svg>
             </div>
             <p className="text-gray-600 font-medium mb-1">No student feedback yet.</p>
-            <p className="text-sm text-gray-400">Analytics will appear once students start asking questions or leaving ratings.</p>
+            <p className="text-sm text-gray-400">Analytics will appear once students start asking questions, watching lectures, or leaving ratings.</p>
           </div>
         )}
+
+        {/* ── Lecture Engagement ── */}
+        {engagementLoading ? (
+          <div className="mb-6"><Spinner /></div>
+        ) : engagement ? (
+          <EngagementSection engagement={engagement} />
+        ) : null}
+
+        {/* ── Problem Solving ── */}
+        {psLoading ? (
+          <div className="mb-6"><Spinner /></div>
+        ) : problemSolving ? (
+          <ProblemSolvingSection ps={problemSolving} />
+        ) : null}
 
         {/* ── Topic analytics ── */}
         {hasTopics && (
@@ -509,7 +827,7 @@ export default function TeacherFeedbackPage() {
                 <div className="mt-4 border border-yellow-200 bg-yellow-50 rounded-lg p-4">
                   <p className="text-xs uppercase tracking-widest text-yellow-700 font-semibold mb-2">Topic Detail</p>
                   <p className="text-sm font-bold text-black mb-3">{activeTopic.topic}</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="text-center">
                       <p className="text-xl font-bold text-black">{activeTopic.question_count}</p>
                       <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">AI Questions</p>
@@ -518,8 +836,32 @@ export default function TeacherFeedbackPage() {
                       <p className="text-xl font-bold text-black">{activeTopic.percentage}%</p>
                       <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">of questions</p>
                     </div>
-                    {activeTopic.lecture_title && (
+                    {activeTopic.replay_count > 0 && (
                       <div className="text-center">
+                        <p className="text-xl font-bold text-blue-600">{activeTopic.replay_count}</p>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Replays</p>
+                      </div>
+                    )}
+                    {activeTopic.rewind_count > 0 && (
+                      <div className="text-center">
+                        <p className="text-xl font-bold text-purple-600">{activeTopic.rewind_count}</p>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Rewinds</p>
+                      </div>
+                    )}
+                    {activeTopic.pause_count > 0 && (
+                      <div className="text-center">
+                        <p className="text-xl font-bold text-yellow-600">{activeTopic.pause_count}</p>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Pauses</p>
+                      </div>
+                    )}
+                    {activeTopic.completion_pct > 0 && (
+                      <div className="text-center">
+                        <p className="text-xl font-bold text-green-600">{activeTopic.completion_pct.toFixed(0)}%</p>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Completion</p>
+                      </div>
+                    )}
+                    {activeTopic.lecture_title && (
+                      <div className="text-center col-span-2">
                         <p className="text-sm font-bold text-black truncate" title={activeTopic.lecture_title}>{activeTopic.lecture_title}</p>
                         <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Lecture</p>
                       </div>

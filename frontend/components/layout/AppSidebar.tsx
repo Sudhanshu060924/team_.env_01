@@ -62,6 +62,13 @@ function IconHelp() {
     </svg>
   )
 }
+function IconLogout() {
+  return (
+    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+    </svg>
+  )
+}
 
 // ── Nav item config ──────────────────────────────────────────────────────────
 
@@ -144,11 +151,17 @@ export default function AppSidebar({ role }: AppSidebarProps) {
       {/* ── Footer ── */}
       <div className="px-3 pb-5 border-t border-gray-100 pt-4 flex flex-col gap-2">
         <button
-          onClick={() => logout()}
           className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors w-full text-left"
         >
           <IconHelp />
           Need Help?
+        </button>
+        <button
+          onClick={() => logout()}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors w-full text-left"
+        >
+          <IconLogout />
+          Logout
         </button>
       </div>
     </aside>

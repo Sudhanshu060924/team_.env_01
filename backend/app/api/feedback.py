@@ -7,15 +7,21 @@ Teacher analytics endpoints (require role=teacher):
   GET  /api/feedback/lectures/{lecture_id}       → FeedbackOverview for one lecture
   GET  /api/feedback/lectures/{lecture_id}/ratings/analytics → RatingAnalytics
   GET  /api/feedback/lectures/{lecture_id}/ratings/reviews   → List[WrittenReview]
+  GET  /api/feedback/engagement                  → LectureEngagementStats (all or ?lecture_id=)
+  GET  /api/feedback/problem-solving             → ProblemSolvingStats (all or ?lecture_id=)
+  GET  /api/feedback/teacher-score               → TeacherPerformanceScore
 
 Student rating endpoints (require role=student):
   GET  /api/feedback/lectures/{lecture_id}/rating  → RatingRead | null (own rating)
   POST /api/feedback/lectures/{lecture_id}/rating  → RatingRead (create)
   PUT  /api/feedback/lectures/{lecture_id}/rating  → RatingRead (update)
+
+Student playback endpoint (require role=student):
+  POST /api/feedback/lectures/{lecture_id}/playback → 204 (flush batched events)
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,15 +35,19 @@ from app.schemas.feedback import (
     RatingRead,
     RatingAnalytics,
     WrittenReview,
+    ProblemSolvingStats,
+    TeacherPerformanceScore,
 )
+from app.schemas.playback import PlaybackFlush, LectureEngagementStats
 import app.services.feedback_service as feedback_svc
 import app.services.rating_service as rating_svc
+import app.services.playback_service as playback_svc
 
 router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Ownership guard helper
+# Ownership guard helpers
 # ---------------------------------------------------------------------------
 
 async def _verify_lecture_ownership(
@@ -79,7 +89,7 @@ async def get_feedback_overview(
 ):
     """
     Return aggregated overview statistics for the authenticated teacher.
-    Includes engagement stats + rating summary.
+    Includes engagement stats + rating summary + teacher performance score.
     Passing ?lecture_id=<id> scopes the result to that single lecture.
     """
     if lecture_id:
@@ -97,7 +107,7 @@ async def get_feedback_topics(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("teacher")),
 ):
-    """Return per-topic breakdown sorted by question count descending."""
+    """Return per-topic breakdown with playback engagement data, sorted by question count."""
     if lecture_id:
         await _verify_lecture_ownership(db, lecture_id, current_user.id)
     return await feedback_svc.get_topics(db, current_user.id, lecture_id=lecture_id)
@@ -149,6 +159,68 @@ async def get_lecture_written_reviews(
     """
     await _verify_lecture_ownership(db, lecture_id, current_user.id)
     return await rating_svc.get_written_reviews(db, [lecture_id])
+
+
+@router.get(
+    "/engagement",
+    response_model=LectureEngagementStats,
+    tags=["feedback"],
+)
+async def get_engagement_stats(
+    lecture_id: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("teacher")),
+):
+    """
+    Return aggregated video playback engagement stats.
+    Pass ?lecture_id= to scope to one lecture, or omit for all teacher lectures.
+    """
+    from sqlalchemy import select as sa_select
+    from app.database.models import Lecture as LectureModel
+    if lecture_id:
+        await _verify_lecture_ownership(db, lecture_id, current_user.id)
+        lecture_ids = [lecture_id]
+    else:
+        result = await db.execute(
+            sa_select(LectureModel.id).where(LectureModel.teacher_id == current_user.id)
+        )
+        lecture_ids = list(result.scalars().all())
+    return await playback_svc.get_lecture_engagement(db, lecture_ids)
+
+
+@router.get(
+    "/problem-solving",
+    response_model=ProblemSolvingStats,
+    tags=["feedback"],
+)
+async def get_problem_solving_stats(
+    lecture_id: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("teacher")),
+):
+    """
+    Return problem-solving (doubt response) analytics.
+    Counts only student ↔ teacher doubt messages — not AI chat.
+    """
+    if lecture_id:
+        await _verify_lecture_ownership(db, lecture_id, current_user.id)
+    return await feedback_svc.get_problem_solving(db, current_user.id, lecture_id=lecture_id)
+
+
+@router.get(
+    "/teacher-score",
+    response_model=TeacherPerformanceScore,
+    tags=["feedback"],
+)
+async def get_teacher_performance_score(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("teacher")),
+):
+    """
+    Return the calculated teacher performance score (0–5) with sub-scores.
+    Score is always computed teacher-wide (not per-lecture).
+    """
+    return await feedback_svc.get_teacher_score(db, current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -207,3 +279,30 @@ async def student_update_rating(
     Uses the same upsert — creates if not exists.
     """
     return await rating_svc.upsert_student_rating(db, lecture_id, current_user.id, payload)
+
+
+# ---------------------------------------------------------------------------
+# Student playback endpoint
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/lectures/{lecture_id}/playback",
+    status_code=204,
+    tags=["feedback", "student"],
+)
+async def student_flush_playback(
+    lecture_id: str,
+    payload: PlaybackFlush,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("student")),
+):
+    """
+    Receive a batched flush of video playback events from the student player.
+    All counters are DELTA values for this session.
+    This endpoint is fire-and-forget from the player (called on pause/unload).
+    """
+    await _verify_lecture_exists(db, lecture_id)
+    await playback_svc.flush_playback(db, lecture_id, current_user.id, payload)
+    response.status_code = 204
+    return None

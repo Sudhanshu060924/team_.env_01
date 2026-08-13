@@ -124,6 +124,7 @@ export default function LectureLayout({
           <LectureVideo
             ref={videoRef}
             src={videoSrc ?? undefined}
+            lectureId={lectureId}
             onEnded={onVideoEnded}
           />
         </div>
