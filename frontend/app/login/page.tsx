@@ -1,40 +1,55 @@
-'use client'
+"use client";
 
-import { useState, FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useAuth } from '@/hooks/useAuth'
-import AuthLayout from '@/components/auth/AuthLayout'
-import Input from '@/components/ui/Input'
-import Button from '@/components/ui/Button'
+import { useState, FormEvent, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth";
+import AuthLayout from "@/components/auth/AuthLayout";
+import Input from "@/components/ui/Input";
+import Button from "@/components/ui/Button";
 
 export default function LoginPage() {
-  const { login, isAuthenticated, user } = useAuth()
-  const router = useRouter()
+  const { login, isAuthenticated, user } = useAuth();
+  const router = useRouter();
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (isAuthenticated && user) {
-    router.replace(user.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard')
-    return null
-  }
+  // Redirect already-authenticated users after render.
+  // Do NOT call router.replace() directly inside the component body.
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    router.replace(
+      user.role === "teacher" ? "/teacher/dashboard" : "/student/dashboard",
+    );
+  }, [isAuthenticated, user, router]);
 
   const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    setIsSubmitting(true)
+    e.preventDefault();
+
+    setError(null);
+    setIsSubmitting(true);
+
     try {
-      const loggedIn = await login({ email, password })
-      router.replace(loggedIn.role === 'teacher' ? '/teacher/dashboard' : '/student/dashboard')
+      const loggedIn = await login({
+        email,
+        password,
+      });
+
+      router.replace(
+        loggedIn.role === "teacher"
+          ? "/teacher/dashboard"
+          : "/student/dashboard",
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : "Login failed");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
     <AuthLayout>
@@ -43,7 +58,10 @@ export default function LoginPage() {
         className="bg-white border border-gray-200 rounded-lg p-8 flex flex-col gap-5 shadow-sm"
       >
         <div>
-          <h2 className="text-lg font-bold text-black">Sign in to your account</h2>
+          <h2 className="text-lg font-bold text-black">
+            Sign in to your account
+          </h2>
+
           <p className="text-sm text-gray-500 mt-0.5">Welcome back</p>
         </div>
 
@@ -82,16 +100,19 @@ export default function LoginPage() {
           loading={isSubmitting}
           className="w-full"
         >
-          {isSubmitting ? 'Signing in…' : 'Sign in'}
+          {isSubmitting ? "Signing in…" : "Sign in"}
         </Button>
 
         <p className="text-center text-xs text-gray-500">
-          No account?{' '}
-          <Link href="/signup" className="text-black font-semibold hover:underline">
+          No account?{" "}
+          <Link
+            href="/signup"
+            className="text-black font-semibold hover:underline"
+          >
             Create one
           </Link>
         </p>
       </form>
     </AuthLayout>
-  )
+  );
 }
